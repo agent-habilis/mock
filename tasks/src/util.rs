@@ -1,5 +1,15 @@
+use std::path::{Path, PathBuf};
+
 use agent_habilis_mock::util::output;
 use xshell::{Shell, cmd};
+
+/// The workspace root — the parent of this `tasks` crate's manifest dir.
+pub(crate) fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
 
 /// Install `krate` via `cargo install --locked` if the probe command (`check`)
 /// fails. Best-effort: a probe or install hiccup must not abort the calling

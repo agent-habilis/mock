@@ -9,6 +9,7 @@ mod coverage;
 mod fmt;
 mod install;
 mod lint;
+mod man;
 mod proptest;
 mod test;
 mod util;
@@ -44,6 +45,8 @@ enum Task {
     Clean,
     /// Build and install the `ahm` binary.
     Install,
+    /// Generate roff man pages into target/man/.
+    Man,
 }
 
 fn main() -> ExitCode {
@@ -65,6 +68,7 @@ fn main() -> ExitCode {
         Task::Coverage => coverage::run(&sh),
         Task::Clean => clean::run(&sh),
         Task::Install => install::run(&sh),
+        Task::Man => man::run(),
     };
 
     match outcome {

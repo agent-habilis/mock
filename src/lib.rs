@@ -67,6 +67,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     serve(args).await
 }
 
+/// The `ahm` clap command tree, for offline man-page generation. Consumed by
+/// the `man` task in the dev-only `tasks` crate, which renders it through
+/// `clap_mangen`; never reachable from the shipped binary.
+#[must_use]
+pub fn cli_command() -> clap::Command {
+    <Args as clap::CommandFactory>::command()
+}
+
 /// Configure logging from `args`, then bind and serve requests until Ctrl-C.
 ///
 /// In [`Update::Only`] mode the function returns without binding a port. The
