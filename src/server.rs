@@ -11,7 +11,7 @@ use crate::mock::manager::MockManager;
 use crate::proxy::{ProxyResponse, proxy_request};
 use crate::stream::delay::apply_delay;
 use crate::stream::throttle::{ResponseBody, buffered_body, throttled_body};
-use crate::util::logger;
+use crate::util::output;
 
 /// Maximum allowed request body size (1 GB).
 const MAX_REQUEST_BODY_SIZE: usize = 1_073_741_824;
@@ -79,7 +79,7 @@ pub async fn handle_request(
         .path_and_query()
         .map_or_else(|| req.uri().path().to_string(), ToString::to_string);
 
-    logger::info(&format!("{connection_id} \u{1f449} {method} {uri}"));
+    output::status("Request", &format!("{connection_id} {method} {uri}"));
 
     // Health checks
     if uri == "/.well-known/live" || uri == "/.well-known/ready" {
@@ -91,7 +91,7 @@ pub async fn handle_request(
             None,
             &state.args,
         );
-        logger::info(&format!("{connection_id} \u{1f448} {}", 200));
+        output::response(&connection_id, 200, None);
         return Ok(resp);
     }
 
@@ -127,7 +127,7 @@ pub async fn handle_request(
         resp_headers.push(("x-mocker-request-id".to_string(), connection_id.clone()));
 
         let resp = build_response_from_headers(200, vec![], &resp_headers);
-        logger::info(&format!("{connection_id} \u{1f448} 200 CORS"));
+        output::response(&connection_id, 200, Some("CORS"));
         return Ok(resp);
     }
 
@@ -146,7 +146,7 @@ pub async fn handle_request(
     // Collect request body with size limit.
     // If exceeded, close the connection immediately by dropping the body.
     let Some(req_body) = collect_body_limited(req.into_body(), MAX_REQUEST_BODY_SIZE).await? else {
-        logger::warn(&format!(
+        output::warning(&format!(
             "{connection_id} request body exceeds {MAX_REQUEST_BODY_SIZE} bytes limit, closing connection"
         ));
         return Ok(Response::builder()
@@ -218,7 +218,7 @@ pub async fn handle_request(
                 Some("Error"),
                 &state.args,
             );
-            logger::error(&format!("{connection_id} \u{1f448} {}", 502));
+            output::response(&connection_id, 502, None);
             return Ok(resp);
         }
     };
@@ -263,7 +263,7 @@ pub async fn handle_request(
     // trickle rather than the whole body at once.
     let resp_body = throttled_body(Bytes::from(body), state.args.throttle);
     let resp = build_streaming_response(status, resp_body, &extra_headers);
-    logger::info(&format!("{connection_id} \u{1f448} {status}"));
+    output::response(&connection_id, status, None);
     Ok(resp)
 }
 
@@ -648,7 +648,7 @@ mod tests {
         use tokio::net::TcpListener;
 
         // Suppress log output
-        logger::set_level(logger::LogLevel::Silent);
+        output::set_level(output::LogLevel::Silent);
 
         let state = make_test_state(Mode::Read);
 
@@ -707,7 +707,7 @@ mod tests {
         use hyper_util::rt::TokioIo;
         use tokio::net::TcpListener;
 
-        logger::set_level(logger::LogLevel::Silent);
+        output::set_level(output::LogLevel::Silent);
 
         let state = make_test_state(Mode::Read);
 
@@ -757,7 +757,7 @@ mod tests {
         use hyper_util::rt::TokioIo;
         use tokio::net::TcpListener;
 
-        logger::set_level(logger::LogLevel::Silent);
+        output::set_level(output::LogLevel::Silent);
 
         let tmp = tempfile::TempDir::new().unwrap();
         let mut args = make_test_args(Mode::Read);
@@ -863,7 +863,7 @@ mod tests {
         use hyper_util::rt::TokioIo;
         use tokio::net::TcpListener;
 
-        logger::set_level(logger::LogLevel::Silent);
+        output::set_level(output::LogLevel::Silent);
 
         let state = make_test_state(Mode::Read);
 
@@ -923,7 +923,7 @@ mod tests {
         // test collect_body_limited directly with a real Incoming body.
         // Build a server that uses a custom handler with a small limit.
 
-        logger::set_level(logger::LogLevel::Silent);
+        output::set_level(output::LogLevel::Silent);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -995,7 +995,7 @@ mod tests {
 
         const TEST_MAX_SIZE: usize = 5;
 
-        logger::set_level(logger::LogLevel::Silent);
+        output::set_level(output::LogLevel::Silent);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

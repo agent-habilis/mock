@@ -24,9 +24,9 @@
 
 // Public surface: `args` (CLI + validated config), `server` (the request
 // handler + shared state the in-process test harness drives), `mock::manager`
-// (read/write of mock files), and `util::logger` (verbosity control). Every
-// other module is an implementation detail kept `pub(crate)` so internal
-// refactors are never breaking API changes.
+// (read/write of mock files), and `util::output` (cargo-style output +
+// verbosity control). Every other module is an implementation detail kept
+// `pub(crate)` so internal refactors are never breaking API changes.
 pub mod args;
 pub mod mock;
 pub mod server;
@@ -52,7 +52,7 @@ use tokio::net::TcpListener;
 use args::{Args, LogLevel, Update, ValidatedArgs};
 use mock::manager::MockManager;
 use server::{AppState, handle_request};
-use util::logger;
+use util::output;
 
 /// Parse `argv`, validate it, and run the server to completion.
 ///
@@ -76,18 +76,26 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// # Errors
 /// Returns an error if the configured port cannot be bound.
 pub async fn serve(args: ValidatedArgs) -> Result<(), Box<dyn std::error::Error>> {
-    logger::set_level(log_level_for(args.logging));
+    output::set_level(log_level_for(args.logging));
 
-    logger::info(&format!(
-        "mode={}, origin={}, mocks_dir={}, delay={}ms, throttle={} B/s, retries={}, cors={}",
-        args.mode,
-        args.origin,
-        args.mocks_dir.display(),
-        args.delay,
-        args.throttle,
-        args.retries,
-        args.cors,
-    ));
+    // Throttle is encoded as `0` for unlimited (the `--throttle Infinity`
+    // default); render that as `∞` rather than a misleading `0 B/s`.
+    let throttle = if args.throttle == 0 {
+        "∞".to_string()
+    } else {
+        format!("{} B/s", args.throttle)
+    };
+    output::status(
+        "Serving",
+        &format!(
+            "{} mode (delay {}ms, throttle {}, retries {}, cors {})",
+            args.mode,
+            args.delay,
+            throttle,
+            args.retries,
+            if args.cors { "on" } else { "off" },
+        ),
+    );
 
     // `--update startup`/`only` is accepted for CLI compatibility, but the bulk
     // mock-refresh pass is not implemented yet; say so plainly rather than
@@ -95,10 +103,10 @@ pub async fn serve(args: ValidatedArgs) -> Result<(), Box<dyn std::error::Error>
     match args.update {
         Update::Off => {}
         Update::Startup => {
-            logger::warn("update mode 'startup' is not implemented; mocks are left unchanged");
+            output::warning("update mode 'startup' is not implemented; mocks are left unchanged");
         }
         Update::Only => {
-            logger::warn("update mode 'only' is not implemented; mocks are left unchanged");
+            output::warning("update mode 'only' is not implemented; mocks are left unchanged");
             return Ok(());
         }
     }
@@ -106,12 +114,11 @@ pub async fn serve(args: ValidatedArgs) -> Result<(), Box<dyn std::error::Error>
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], args.port));
     let listener = TcpListener::bind(addr).await?;
 
-    logger::info(&format!(
-        "started on port {}, with pid {}, and proxying {}",
-        args.port,
-        std::process::id(),
-        args.origin,
-    ));
+    output::status("Proxying", &args.origin);
+    output::status(
+        "Listening",
+        &format!("on {addr} (pid {})", std::process::id()),
+    );
 
     let state = Arc::new(build_state(args));
 
@@ -119,7 +126,7 @@ pub async fn serve(args: ValidatedArgs) -> Result<(), Box<dyn std::error::Error>
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => spawn_connection(TokioIo::new(stream), state.clone()),
-                Err(err) => logger::error(&format!("failed to accept connection: {err}")),
+                Err(err) => output::error(&format!("failed to accept connection: {err}")),
             }
         }
     };
@@ -128,9 +135,9 @@ pub async fn serve(args: ValidatedArgs) -> Result<(), Box<dyn std::error::Error>
         () = accept_loop => {}
         result = tokio::signal::ctrl_c() => {
             if let Err(err) = result {
-                logger::error(&format!("failed to listen for ctrl-c: {err}"));
+                output::error(&format!("failed to listen for ctrl-c: {err}"));
             }
-            logger::info("closing ahm \u{1f44b}");
+            output::status("Closing", "ahm");
         }
     }
 
@@ -164,12 +171,12 @@ fn spawn_connection(io: TokioIo<tokio::net::TcpStream>, state: Arc<AppState>) {
     });
 }
 
-/// Map the user-facing [`LogLevel`] to the internal logger level.
-fn log_level_for(level: LogLevel) -> logger::LogLevel {
+/// Map the user-facing [`LogLevel`] to the internal output level.
+fn log_level_for(level: LogLevel) -> output::LogLevel {
     match level {
-        LogLevel::Silent => logger::LogLevel::Silent,
-        LogLevel::Error => logger::LogLevel::Error,
-        LogLevel::Warn => logger::LogLevel::Warn,
-        LogLevel::Verbose => logger::LogLevel::Verbose,
+        LogLevel::Silent => output::LogLevel::Silent,
+        LogLevel::Error => output::LogLevel::Error,
+        LogLevel::Warn => output::LogLevel::Warn,
+        LogLevel::Verbose => output::LogLevel::Verbose,
     }
 }

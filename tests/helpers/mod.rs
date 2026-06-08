@@ -19,7 +19,7 @@ use tokio::net::TcpListener;
 use agent_habilis_mock::args::{LogLevel, Mode, Update, ValidatedArgs};
 use agent_habilis_mock::mock::manager::MockManager;
 use agent_habilis_mock::server::{AppState, handle_request};
-use agent_habilis_mock::util::logger;
+use agent_habilis_mock::util::output;
 
 /// RAII guard for test servers. Aborts the spawned task on drop.
 pub(crate) struct TestServer {
@@ -237,7 +237,7 @@ pub(crate) fn make_test_args_with_overwrite_response_headers(
 
 /// Start a mocker server with the given configuration.
 pub(crate) async fn start_mocker(args: ValidatedArgs) -> TestServer {
-    logger::set_level(logger::LogLevel::Silent);
+    output::set_level(output::LogLevel::Silent);
 
     let mock_manager = MockManager::new(
         args.mocks_dir.clone(),

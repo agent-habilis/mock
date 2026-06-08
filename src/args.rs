@@ -152,11 +152,7 @@ const MOCK_KEYS_DEFAULT: &str = "method,url";
 /// Records HTTP interactions as a reverse proxy and replays them, so tests and
 /// local development don't need to reach the real upstream service.
 #[derive(Parser, Debug, Clone)]
-#[command(
-    name = "ahm",
-    version,
-    after_help = "a tool by agent-habilis █🫈"
-)]
+#[command(name = "ahm", version, after_help = "a tool by agent-habilis █🫈")]
 pub struct Args {
     /// Origin base URL to proxy requests to (defaults to localhost in read mode)
     #[arg(long)]
