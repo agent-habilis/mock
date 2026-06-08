@@ -9,6 +9,7 @@
 //! `--logging`) gates every emitter, so the same helpers serve both the long-
 //! running server and the task runner.
 
+use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use anstyle::{AnsiColor, Style};
@@ -112,6 +113,21 @@ pub fn error(msg: &str) {
     }
 }
 
+/// Reset the current terminal line (carriage return + clear-to-EOL) so a
+/// following status line overwrites whatever the terminal echoed in place —
+/// e.g. the `^C` the tty prints when the user hits Ctrl+C. No-op unless stderr
+/// is a terminal (redirected output never gets the echoed `^C`) and `Warn`
+/// output is enabled.
+pub fn clear_line() {
+    if enabled(LogLevel::Warn) && std::io::stderr().is_terminal() {
+        // `\r` returns to column 0; `\x1b[K` clears to end of line. Not routed
+        // through anstream because these are cursor controls, not SGR color.
+        let mut stderr = std::io::stderr();
+        let _ = write!(stderr, "\r\x1b[K");
+        let _ = stderr.flush();
+    }
+}
+
 fn status_line(color: AnsiColor, verb: &str, msg: &str) {
     let style = bold(color);
     anstream::eprintln!("{style}{verb:>12}{style:#} {msg}");
@@ -179,5 +195,6 @@ mod tests {
         response("deadbeef", 502, None);
         warning("w");
         error("e");
+        clear_line();
     }
 }

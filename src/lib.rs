@@ -137,6 +137,7 @@ pub async fn serve(args: ValidatedArgs) -> Result<(), Box<dyn std::error::Error>
             if let Err(err) = result {
                 output::error(&format!("failed to listen for ctrl-c: {err}"));
             }
+            output::clear_line();
             output::status("Closing", "ahm");
         }
     }
