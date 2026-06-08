@@ -1,0 +1,7 @@
+[toolchain]
+# Single source of truth for the toolchain on every env (local + CI).
+# Exact patch pin so a floating "1.95" can't resolve to different patch
+# releases between machines.
+channel = "1.95.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

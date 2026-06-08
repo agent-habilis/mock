@@ -1,0 +1,22 @@
+# Readability-focused Clippy configuration. See [lints] in Cargo.toml for the
+# enabled lint set.
+
+# Complexity ceilings (favor small, readable functions).
+cognitive-complexity-threshold = 20
+too-many-lines-threshold = 120
+
+# Domain terms that must not trip clippy::doc_markdown (extends the default
+# allow-list rather than replacing it).
+doc-valid-idents = [
+    "GraphQL",
+    "JavaScript",
+    "JSON",
+    "HTTP",
+    "HTTPS",
+    "URL",
+    "CORS",
+    "gzip",
+    "brotli",
+    "deflate",
+    "SHA256",
+]
