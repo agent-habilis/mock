@@ -114,12 +114,15 @@ pub(crate) fn get_http_filename(url: &str, method: &str, _mock_keys: &HashSet<St
     // Extract path from URL
     let path = extract_path(url);
     let slug = to_safe_slug(&path);
-    let method_lower = method.to_lowercase();
+    // Slugify the method too: normally it's a clean token like `get`, but an
+    // arbitrary method could carry path separators or other unsafe characters
+    // that would otherwise leak into the filename (e.g. `/` escaping the path).
+    let method_slug = to_safe_slug(method);
 
     if slug.is_empty() {
-        format!("http-{method_lower}")
+        format!("http-{method_slug}")
     } else {
-        format!("http-{method_lower}-{slug}")
+        format!("http-{method_slug}-{slug}")
     }
 }
 
@@ -452,6 +455,17 @@ mod tests {
         let keys = HashSet::new();
         let result = get_http_filename("https://api.example.com", "GET", &keys);
         assert_eq!(result, "http-get");
+    }
+
+    #[test]
+    fn test_http_filename_slugifies_unsafe_method() {
+        // A method carrying a path separator must not leak it into the
+        // filename (it would otherwise escape into a `.json` dotfile with no
+        // extension). The method is slugified just like the URL path.
+        let keys = HashSet::new();
+        let result = get_http_filename("https://api.example.com/users", "/", &keys);
+        assert!(!result.contains('/'), "method leaked a slash: {result}");
+        assert_eq!(result, "http--users");
     }
 
     #[test]

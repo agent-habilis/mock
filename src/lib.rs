@@ -46,7 +46,7 @@ use std::sync::Arc;
 use clap::Parser;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
 use args::{Args, LogLevel, Update, ValidatedArgs};
@@ -144,19 +144,18 @@ pub async fn serve(args: ValidatedArgs) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-/// Build the shared [`AppState`] (mock manager + HTTP client) from `args`.
+/// Build the shared [`AppState`] (mock manager + rustls client config) from
+/// `args`.
 fn build_state(args: ValidatedArgs) -> AppState {
     let mock_manager = MockManager::new(
         args.mocks_dir.clone(),
         args.mock_keys.clone(),
         args.redacted_headers.clone(),
     );
-    let http_client =
-        hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build_http();
     AppState {
         args,
         mock_manager,
-        http_client,
+        tls_config: server::build_tls_config(),
     }
 }
 

@@ -71,27 +71,39 @@ path = "src/main.rs"
 [dependencies]
 tokio = { version = "1", features = ["net", "time", "signal", "rt-multi-thread", "macros", "fs", "io-util"] }
 hyper = { version = "1", features = ["http1", "server", "client"] }
-hyper-util = { version = "0.1", features = ["http1", "client-legacy", "tokio"] }
+# Only the runtime adapters (`rt::TokioIo`/`TokioExecutor`) are used in the
+# product; the `legacy` pooling client is dev-only (see [dev-dependencies]).
+hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
-tower-service = "0.3"
 futures-util = "0.3"
-sha2 = "0.10"
+# rustls-backed HTTPS so `https://` origins work, driven by hyper's modern
+# connection-level client. `ring` is the crypto backend (avoids the aws-lc-rs C
+# toolchain); native roots trust OS-installed CAs (internal services) with the
+# bundled Mozilla set (webpki-roots) as the fallback.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-native-certs = "0.8"
+webpki-roots = "1"
+sha2 = "0.11"
 flate2 = "1"
-brotli = "7"
+brotli = "8"
 base64 = "0.22"
 thiserror = "2"
 # cargo-style status output (anstyle = the styling crate cargo/clap use;
 # anstream auto-strips color when the stream isn't a terminal). Both already
 # in Cargo.lock via clap, so no new download.
 anstyle = "1"
-anstream = "0.6"
+anstream = "1"
 
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
+# The test harness drives requests against the spawned server with hyper's
+# pooling client. Kept dev-only so the product binary stays free of the
+# `legacy` client; merged with the [dependencies] entry for test builds.
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
 
 [profile.release]
 opt-level = 3

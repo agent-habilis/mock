@@ -1,16 +1,17 @@
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
-use hyper::rt::{Read, ReadBufCursor, Write};
+use hyper::client::conn::http1;
+use hyper::rt::{Read, Write};
 use hyper::{Request, Uri};
-use hyper_util::client::legacy::Client;
-use hyper_util::client::legacy::connect::{Connect, Connected, Connection, HttpConnector};
+use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls::ClientConfig;
+use tokio_rustls::rustls::pki_types::ServerName;
 
 use crate::error::MockerError;
 use crate::util::backoff::Backoff;
@@ -27,8 +28,12 @@ pub(crate) struct ProxyResponse {
 
 /// Forward a request to origin, optionally through an upstream HTTP proxy and
 /// with retries.
+///
+/// Built on hyper's connection-level client (`hyper::client::conn::http1`) — no
+/// pooling — so a fresh connection is dialed per attempt: plaintext TCP for
+/// `http://`, or a rustls TLS session (using `tls_config`) for `https://`.
 pub(crate) async fn proxy_request(
-    http_client: &Client<HttpConnector, Full<Bytes>>,
+    tls_config: &Arc<ClientConfig>,
     origin: &str,
     method: &str,
     url: &str,
@@ -38,81 +43,48 @@ pub(crate) async fn proxy_request(
     overwrite_request_headers: &HashMap<String, serde_json::Value>,
     proxy_url: &str,
 ) -> Result<ProxyResponse, MockerError> {
-    // The request-target is always the absolute origin URL. On a direct
-    // connection hyper sends it origin-form; through `ProxyConnector` (which
-    // reports a proxied connection) hyper rewrites it to absolute-form
-    // (RFC 9112 §3.2.2) so the proxy learns which origin to forward to.
     let full_url = format!("{origin}{url}");
     let body = Bytes::from(body);
 
-    if proxy_url.is_empty() {
-        send_with_retries(
-            http_client,
-            &full_url,
-            method,
-            headers,
-            body,
-            retries,
-            overwrite_request_headers,
-        )
-        .await
-    } else {
-        let authority = proxy_authority(proxy_url)?;
-        let proxy_client = Client::builder(hyper_util::rt::TokioExecutor::new())
-            .build(ProxyConnector::new(authority));
-        send_with_retries(
-            &proxy_client,
-            &full_url,
-            method,
-            headers,
-            body,
-            retries,
-            overwrite_request_headers,
-        )
-        .await
-    }
-}
-
-/// Run `do_request`, retrying transient failures (network errors and 5xx) up to
-/// `retries` times with exponential backoff.
-async fn send_with_retries<C>(
-    client: &Client<C, Full<Bytes>>,
-    full_url: &str,
-    method: &str,
-    headers: &[(String, String)],
-    body: Bytes,
-    retries: u32,
-    overwrite_request_headers: &HashMap<String, serde_json::Value>,
-) -> Result<ProxyResponse, MockerError>
-where
-    C: Connect + Clone + Send + Sync + 'static,
-{
     if retries == 0 {
-        return do_request(
-            client,
-            full_url,
+        return send_once(
+            tls_config,
+            &full_url,
             method,
             headers,
             body,
             overwrite_request_headers,
+            proxy_url,
         )
         .await;
     }
 
-    let full_url = full_url.to_string();
+    let tls_config = tls_config.clone();
     let method = method.to_string();
     let headers = headers.to_vec();
     let overwrite = overwrite_request_headers.clone();
-    let client = client.clone();
+    let proxy_url = proxy_url.to_string();
     retry(
         move || {
+            let tls_config = tls_config.clone();
             let full_url = full_url.clone();
             let method = method.clone();
             let headers = headers.clone();
             let body = body.clone(); // `Bytes` clones are O(1) (refcounted).
             let overwrite = overwrite.clone();
-            let client = client.clone();
-            async move { do_request(&client, &full_url, &method, &headers, body, &overwrite).await }
+            let proxy_url = proxy_url.clone();
+            async move {
+                send_once(
+                    &tls_config,
+                    &full_url,
+                    &method,
+                    &headers,
+                    body,
+                    &overwrite,
+                    &proxy_url,
+                )
+                .await
+            }
         },
         retries,
         // Retry transient origin failures: network errors and 5xx.
@@ -125,49 +97,100 @@ where
     .await
 }
 
-async fn do_request<C>(
-    client: &Client<C, Full<Bytes>>,
+/// Dial the origin (or upstream proxy), send one request, and read the full
+/// response. Bounded by [`PROXY_TIMEOUT`].
+async fn send_once(
+    tls_config: &Arc<ClientConfig>,
     full_url: &str,
     method: &str,
     headers: &[(String, String)],
     body: Bytes,
     overwrite_request_headers: &HashMap<String, serde_json::Value>,
-) -> Result<ProxyResponse, MockerError>
-where
-    C: Connect + Clone + Send + Sync + 'static,
-{
-    let uri: Uri = full_url
+    proxy_url: &str,
+) -> Result<ProxyResponse, MockerError> {
+    let target: Uri = full_url
         .parse()
         .map_err(|e: hyper::http::uri::InvalidUri| MockerError::HttpError(e.to_string()))?;
+    let scheme = target.scheme_str().unwrap_or("http");
+    let is_https = scheme.eq_ignore_ascii_case("https");
+    let host = target
+        .host()
+        .ok_or_else(|| MockerError::HttpError(format!("origin URL has no host: {full_url}")))?
+        .to_string();
+    // The Host header the legacy client used to synthesize from the URI authority.
+    let authority = target.authority().map(|a| a.as_str().to_string());
+    let port = target.port_u16().unwrap_or(if is_https { 443 } else { 80 });
 
-    let hyper_method = hyper::Method::from_bytes(method.as_bytes())
-        .map_err(|e| MockerError::HttpError(e.to_string()))?;
+    // Pick the dial target and the request-target form. hyper's h1 client
+    // serializes the request `Uri` verbatim, so origin-form (path only) goes
+    // direct to origin and absolute-form (full URL) goes to a proxy (RFC 9112
+    // §3.2.1/§3.2.2). A proxy is always dialed in plaintext.
+    let (dial_host, dial_port, use_tls, req_uri) = if proxy_url.is_empty() {
+        let path_and_query = target.path_and_query().map_or("/", |p| p.as_str());
+        let req_uri: Uri = path_and_query
+            .parse()
+            .map_err(|e: hyper::http::uri::InvalidUri| MockerError::HttpError(e.to_string()))?;
+        (host.clone(), port, is_https, req_uri)
+    } else {
+        let (proxy_host, proxy_port) = parse_proxy_authority(proxy_url)?;
+        let req_uri: Uri = full_url
+            .parse()
+            .map_err(|e: hyper::http::uri::InvalidUri| MockerError::HttpError(e.to_string()))?;
+        (proxy_host, proxy_port, false, req_uri)
+    };
 
-    let mut builder = Request::builder().method(hyper_method).uri(uri);
+    let req = build_request(
+        method,
+        req_uri,
+        headers,
+        overwrite_request_headers,
+        authority.as_deref(),
+        body,
+    )?;
 
-    // Drop hop-by-hop + content-length before forwarding to origin; hyper
-    // re-frames the body from the owned `Full<Bytes>` and sets content-length.
-    let forwarded = crate::http::headers::strip_hop_by_hop(headers);
-    for (key, value) in &forwarded {
-        builder = builder.header(key.as_str(), value.as_str());
-    }
+    let send = async move {
+        let tcp = TcpStream::connect((dial_host.as_str(), dial_port))
+            .await
+            .map_err(|e| MockerError::HttpError(format!("failed to connect to origin: {e}")))?;
 
-    // Apply overwrite headers (these override originals)
-    for (key, value) in overwrite_request_headers {
-        let val_str = match value {
-            serde_json::Value::String(s) => s.clone(),
-            other => other.to_string(),
-        };
-        builder = builder.header(key.as_str(), val_str.as_str());
-    }
+        if use_tls {
+            let connector = TlsConnector::from(tls_config.clone());
+            let server_name = ServerName::try_from(host.as_str())
+                .map_err(|e| MockerError::HttpError(format!("invalid TLS server name: {e}")))?
+                .to_owned();
+            let tls = connector
+                .connect(server_name, tcp)
+                .await
+                .map_err(|e| MockerError::HttpError(format!("TLS handshake failed: {e}")))?;
+            send_over(TokioIo::new(tls), req).await
+        } else {
+            send_over(TokioIo::new(tcp), req).await
+        }
+    };
 
-    let req = builder
-        .body(Full::new(body))
-        .map_err(|e| MockerError::HttpError(e.to_string()))?;
-
-    let resp = tokio::time::timeout(PROXY_TIMEOUT, client.request(req))
+    tokio::time::timeout(PROXY_TIMEOUT, send)
         .await
         .map_err(|_| MockerError::HttpError("proxy request timed out".to_string()))?
+}
+
+/// Handshake over an established (TLS or plaintext) stream, send the request,
+/// and collect the response.
+async fn send_over<IO>(io: IO, req: Request<Full<Bytes>>) -> Result<ProxyResponse, MockerError>
+where
+    IO: Read + Write + Unpin + Send + 'static,
+{
+    let (mut sender, conn) = http1::handshake(io)
+        .await
+        .map_err(|e| MockerError::HttpError(e.to_string()))?;
+
+    // The connection must be driven concurrently while the request is in flight.
+    let conn_task = tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
+    let resp = sender
+        .send_request(req)
+        .await
         .map_err(|e| MockerError::HttpError(e.to_string()))?;
 
     let status = resp.status().as_u16();
@@ -190,6 +213,8 @@ where
         .to_bytes()
         .to_vec();
 
+    conn_task.abort();
+
     Ok(ProxyResponse {
         status,
         headers: resp_headers,
@@ -197,8 +222,58 @@ where
     })
 }
 
-/// Parse the `host:port` authority from a proxy URL, defaulting to port 80.
-fn proxy_authority(proxy_url: &str) -> Result<String, MockerError> {
+/// Build the outgoing request: method + request-target `Uri`, forwarded headers
+/// (minus hop-by-hop), then overwrite headers. If neither supplies a `Host`, one
+/// is synthesized from the origin authority — hyper's h1 client requires a Host
+/// header and the old pooled client added it implicitly.
+fn build_request(
+    method: &str,
+    uri: Uri,
+    headers: &[(String, String)],
+    overwrite_request_headers: &HashMap<String, serde_json::Value>,
+    origin_authority: Option<&str>,
+    body: Bytes,
+) -> Result<Request<Full<Bytes>>, MockerError> {
+    let hyper_method = hyper::Method::from_bytes(method.as_bytes())
+        .map_err(|e| MockerError::HttpError(e.to_string()))?;
+
+    let mut builder = Request::builder().method(hyper_method).uri(uri);
+
+    let mut has_host = false;
+
+    // Drop hop-by-hop + content-length before forwarding to origin; hyper
+    // re-frames the body from the owned `Full<Bytes>` and sets content-length.
+    let forwarded = crate::http::headers::strip_hop_by_hop(headers);
+    for (key, value) in &forwarded {
+        if key.eq_ignore_ascii_case("host") {
+            has_host = true;
+        }
+        builder = builder.header(key.as_str(), value.as_str());
+    }
+
+    // Apply overwrite headers (these override originals).
+    for (key, value) in overwrite_request_headers {
+        if key.eq_ignore_ascii_case("host") {
+            has_host = true;
+        }
+        let val_str = match value {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        builder = builder.header(key.as_str(), val_str.as_str());
+    }
+
+    if !has_host && let Some(authority) = origin_authority {
+        builder = builder.header("host", authority);
+    }
+
+    builder
+        .body(Full::new(body))
+        .map_err(|e| MockerError::HttpError(e.to_string()))
+}
+
+/// Parse the `(host, port)` to dial from a proxy URL, defaulting to port 80.
+fn parse_proxy_authority(proxy_url: &str) -> Result<(String, u16), MockerError> {
     let without_scheme = proxy_url
         .strip_prefix("http://")
         .or_else(|| proxy_url.strip_prefix("https://"))
@@ -209,81 +284,13 @@ fn proxy_authority(proxy_url: &str) -> Result<String, MockerError> {
             "invalid proxy URL: {proxy_url}"
         )));
     }
-    if authority.contains(':') {
-        Ok(authority.to_string())
+    if let Some((host, port)) = authority.rsplit_once(':') {
+        let port = port.parse::<u16>().map_err(|_| {
+            MockerError::HttpError(format!("invalid proxy port in URL: {proxy_url}"))
+        })?;
+        Ok((host.to_string(), port))
     } else {
-        Ok(format!("{authority}:80"))
-    }
-}
-
-/// A connector that always dials a fixed upstream HTTP proxy and reports the
-/// connection as proxied, so hyper emits absolute-form request-targets
-/// (RFC 9112 §3.2.2) the proxy can forward to the origin.
-#[derive(Clone)]
-struct ProxyConnector {
-    authority: Arc<str>,
-}
-
-impl ProxyConnector {
-    fn new(authority: String) -> Self {
-        Self {
-            authority: Arc::from(authority),
-        }
-    }
-}
-
-impl tower_service::Service<Uri> for ProxyConnector {
-    type Response = ProxyStream;
-    type Error = std::io::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<ProxyStream, std::io::Error>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, _uri: Uri) -> Self::Future {
-        let authority = self.authority.clone();
-        Box::pin(async move {
-            let stream = TcpStream::connect(&*authority).await?;
-            Ok(ProxyStream(hyper_util::rt::TokioIo::new(stream)))
-        })
-    }
-}
-
-/// IO wrapper that tags the underlying socket as a proxied connection.
-struct ProxyStream(hyper_util::rt::TokioIo<TcpStream>);
-
-impl Connection for ProxyStream {
-    fn connected(&self) -> Connected {
-        Connected::new().proxy(true)
-    }
-}
-
-impl Read for ProxyStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: ReadBufCursor<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0).poll_read(cx, buf)
-    }
-}
-
-impl Write for ProxyStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.0).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0).poll_flush(cx)
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0).poll_shutdown(cx)
+        Ok((authority.to_string(), 80))
     }
 }
 
@@ -291,14 +298,16 @@ impl Write for ProxyStream {
 mod tests {
     use super::*;
     use hyper::Response;
-    use hyper::server::conn::http1;
+    use hyper::server::conn::http1 as server_http1;
     use hyper::service::service_fn;
-    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::rt::TokioIo;
     use std::net::SocketAddr;
     use tokio::net::TcpListener;
 
-    fn make_client() -> Client<HttpConnector, Full<Bytes>> {
-        Client::builder(TokioExecutor::new()).build_http()
+    /// A TLS config for the tests. Only plaintext paths are exercised, so its
+    /// roots don't matter — it just satisfies the `proxy_request` signature.
+    fn tls_config() -> Arc<ClientConfig> {
+        crate::server::build_tls_config()
     }
 
     /// Accept one connection, capture the raw request head (request line +
@@ -335,10 +344,9 @@ mod tests {
         // RFC 9112 §3.2.2: when sending to a proxy (other than CONNECT), the
         // request-target MUST be in absolute-form (the full origin URI).
         let (proxy_addr, handle) = start_capture_server().await;
-        let client = make_client();
 
         let result = proxy_request(
-            &client,
+            &tls_config(),
             "http://origin.example.com",
             "GET",
             "/foo?bar=1",
@@ -372,10 +380,9 @@ mod tests {
         // RFC 9112 §3.2.1: a direct request to the origin uses origin-form
         // (the absolute path + query only).
         let (origin_addr, handle) = start_capture_server().await;
-        let client = make_client();
 
         let result = proxy_request(
-            &client,
+            &tls_config(),
             &format!("http://{origin_addr}"),
             "GET",
             "/foo",
@@ -399,10 +406,19 @@ mod tests {
 
     #[test]
     fn proxy_authority_defaults_and_parsing() {
-        assert_eq!(proxy_authority("http://gw:8080").unwrap(), "gw:8080");
-        assert_eq!(proxy_authority("http://gw").unwrap(), "gw:80");
-        assert_eq!(proxy_authority("https://gw:3128/path").unwrap(), "gw:3128");
-        assert!(proxy_authority("http://").is_err());
+        assert_eq!(
+            parse_proxy_authority("http://gw:8080").unwrap(),
+            ("gw".to_string(), 8080)
+        );
+        assert_eq!(
+            parse_proxy_authority("http://gw").unwrap(),
+            ("gw".to_string(), 80)
+        );
+        assert_eq!(
+            parse_proxy_authority("https://gw:3128/path").unwrap(),
+            ("gw".to_string(), 3128)
+        );
+        assert!(parse_proxy_authority("http://").is_err());
     }
 
     async fn start_test_server(
@@ -416,7 +432,7 @@ mod tests {
             // Accept just one connection for the test
             if let Ok((stream, _)) = listener.accept().await {
                 let io = TokioIo::new(stream);
-                let _ = http1::Builder::new()
+                let _ = server_http1::Builder::new()
                     .serve_connection(
                         io,
                         service_fn(move |_req: Request<hyper::body::Incoming>| {
@@ -442,10 +458,9 @@ mod tests {
     async fn test_proxy_request_basic() {
         let (addr, _handle) = start_test_server(200, "ok").await;
         let origin = format!("http://{addr}");
-        let client = make_client();
 
         let result = proxy_request(
-            &client,
+            &tls_config(),
             &origin,
             "GET",
             "/test",
@@ -476,7 +491,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             if let Ok((stream, _)) = listener.accept().await {
                 let io = TokioIo::new(stream);
-                let _ = http1::Builder::new()
+                let _ = server_http1::Builder::new()
                     .serve_connection(
                         io,
                         service_fn(|req: Request<hyper::body::Incoming>| async move {
@@ -503,9 +518,18 @@ mod tests {
             serde_json::Value::String("custom-host.example.com".to_string()),
         );
 
-        let client = make_client();
-        let result =
-            proxy_request(&client, &origin, "GET", "/", &[], vec![], 0, &overwrite, "").await;
+        let result = proxy_request(
+            &tls_config(),
+            &origin,
+            "GET",
+            "/",
+            &[],
+            vec![],
+            0,
+            &overwrite,
+            "",
+        )
+        .await;
 
         // The request should succeed
         assert!(result.is_ok());
@@ -514,9 +538,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_proxy_request_connection_refused() {
-        let client = make_client();
         let result = proxy_request(
-            &client,
+            &tls_config(),
             "http://127.0.0.1:1",
             "GET",
             "/test",
@@ -533,9 +556,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_proxy_request_invalid_method() {
-        let client = make_client();
         let result = proxy_request(
-            &client,
+            &tls_config(),
             "http://127.0.0.1:1",
             "INVALID METHOD WITH SPACES",
             "/test",
@@ -554,10 +576,9 @@ mod tests {
     async fn test_proxy_response_fields() {
         let (addr, _handle) = start_test_server(201, "created").await;
         let origin = format!("http://{addr}");
-        let client = make_client();
 
         let result = proxy_request(
-            &client,
+            &tls_config(),
             &origin,
             "POST",
             "/resource",
@@ -578,10 +599,9 @@ mod tests {
     async fn test_proxy_request_with_proxy_url() {
         let (addr, _handle) = start_test_server(200, "proxied").await;
         let proxy_url = format!("http://{addr}");
-        let client = make_client();
 
         let result = proxy_request(
-            &client,
+            &tls_config(),
             "http://original-host.example.com",
             "GET",
             "/path",

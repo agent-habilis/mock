@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
 use hyper::body::{Bytes, Incoming};
 use hyper::{Request, Response, StatusCode};
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 
 use crate::args::{Mode, ValidatedArgs};
 use crate::error::MockerError;
@@ -16,14 +17,37 @@ use crate::util::output;
 /// Maximum allowed request body size (1 GB).
 const MAX_REQUEST_BODY_SIZE: usize = 1_073_741_824;
 
+/// Build the rustls client config used to dial `https://` origins. Trusts the
+/// OS-native CA roots when they load (so internal HTTPS services with custom CAs
+/// work) and augments/falls back to the bundled webpki roots. Infallible so
+/// every `AppState` constructor — server and test harness alike — can call it
+/// without threading a `Result`.
+pub fn build_tls_config() -> Arc<ClientConfig> {
+    let mut roots = RootCertStore::empty();
+    let native = rustls_native_certs::load_native_certs();
+    for cert in native.certs {
+        let _ = roots.add(cert);
+    }
+    if roots.is_empty() {
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+
+    // Pin the crypto provider explicitly (the `ring` backend) rather than relying
+    // on a process-global default being installed.
+    let provider = Arc::new(tokio_rustls::rustls::crypto::ring::default_provider());
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports the default protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Arc::new(config)
+}
+
 /// Shared application state passed to each request handler.
 pub struct AppState {
     pub args: ValidatedArgs,
     pub mock_manager: MockManager,
-    pub http_client: hyper_util::client::legacy::Client<
-        hyper_util::client::legacy::connect::HttpConnector,
-        Full<Bytes>,
-    >,
+    pub tls_config: Arc<ClientConfig>,
 }
 
 /// Generate an 8-character hex connection id, unique within the process.
@@ -325,7 +349,7 @@ async fn handle_pass(
     req_body: &[u8],
 ) -> HandlerResult {
     let proxy_resp = proxy_request(
-        &state.http_client,
+        &state.tls_config,
         &state.args.origin,
         method,
         url,
@@ -355,7 +379,7 @@ async fn handle_write(
     req_body: &[u8],
 ) -> HandlerResult {
     let proxy_resp = proxy_request(
-        &state.http_client,
+        &state.tls_config,
         &state.args.origin,
         method,
         url,
@@ -451,7 +475,7 @@ async fn handle_pass_read(
 ) -> HandlerResult {
     // Proxy first
     let proxy_result = proxy_request(
-        &state.http_client,
+        &state.tls_config,
         &state.args.origin,
         method,
         url,
@@ -586,6 +610,7 @@ fn build_response_from_headers(
 mod tests {
     use super::*;
     use crate::args::{LogLevel, Mode, Update};
+    use http_body_util::Full;
     use std::collections::HashSet;
     use std::path::PathBuf;
 
@@ -621,13 +646,10 @@ mod tests {
             args.mock_keys.clone(),
             args.redacted_headers.clone(),
         );
-        let http_client =
-            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build_http();
         Arc::new(AppState {
             args,
             mock_manager,
-            http_client,
+            tls_config: build_tls_config(),
         })
     }
 
@@ -768,13 +790,10 @@ mod tests {
             args.mock_keys.clone(),
             args.redacted_headers.clone(),
         );
-        let http_client =
-            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build_http();
         let state = Arc::new(AppState {
             args,
             mock_manager,
-            http_client,
+            tls_config: build_tls_config(),
         });
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

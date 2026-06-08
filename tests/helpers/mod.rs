@@ -244,13 +244,10 @@ pub(crate) async fn start_mocker(args: ValidatedArgs) -> TestServer {
         args.mock_keys.clone(),
         args.redacted_headers.clone(),
     );
-    let http_client =
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-            .build_http();
     let state = Arc::new(AppState {
         args,
         mock_manager,
-        http_client,
+        tls_config: agent_habilis_mock::server::build_tls_config(),
     });
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
