@@ -3,7 +3,7 @@
 #[tokio::main]
 async fn main() {
     if let Err(error) = agent_habilis_mock::run().await {
-        eprintln!("error: {error}");
+        agent_habilis_mock::util::output::error(&error.to_string());
         std::process::exit(1);
     }
 }

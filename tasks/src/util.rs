@@ -1,3 +1,4 @@
+use agent_habilis_mock::util::output;
 use xshell::{Shell, cmd};
 
 /// Install `krate` via `cargo install --locked` if the probe command (`check`)
@@ -13,7 +14,7 @@ pub(crate) fn ensure_installed(sh: &Shell, krate: &str, check: &[&str]) {
         .is_ok();
 
     if !ok {
-        eprintln!("=> Installing {krate}...");
+        output::status("Installing", krate);
         let _ = cmd!(sh, "cargo install --locked {krate}").quiet().run();
     }
 }

@@ -11,6 +11,9 @@ publish = false
 # nobody installs it.
 clap = { version = "4", features = ["derive"] }
 xshell = "0.2"
+# Reused for cargo-style status/error output (util::output), so tasks render the
+# same way as the `ahm` binary and the sibling tools.
+agent-habilis-mock = { path = ".." }
 
 [lints]
 workspace = true

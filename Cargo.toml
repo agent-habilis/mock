@@ -83,6 +83,11 @@ flate2 = "1"
 brotli = "7"
 base64 = "0.22"
 thiserror = "2"
+# cargo-style status output (anstyle = the styling crate cargo/clap use;
+# anstream auto-strips color when the stream isn't a terminal). Both already
+# in Cargo.lock via clap, so no new download.
+anstyle = "1"
+anstream = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
