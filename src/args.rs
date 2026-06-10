@@ -421,6 +421,7 @@ mod tests {
     use proptest::prelude::*;
 
     proptest! {
+        #![proptest_config(crate::proptest_support::config())]
         /// `parse_throttle` never panics; only positive ints / Infinity succeed.
         #[test]
         fn prop_parse_throttle_never_panics(value in ".*") {

@@ -68,6 +68,7 @@ mod tests {
     use std::io::Write;
 
     proptest! {
+        #![proptest_config(crate::proptest_support::config())]
         /// `decompress` never panics on arbitrary bytes + encoding tokens.
         #[test]
         fn prop_decompress_never_panics(

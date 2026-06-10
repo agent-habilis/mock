@@ -188,3 +188,23 @@ fn log_level_for(level: LogLevel) -> output::LogLevel {
         LogLevel::Verbose => output::LogLevel::Verbose,
     }
 }
+
+// Shared config for the crate's `proptest!` blocks. Overrides the default
+// failure-persistence path so regression seeds land in
+// `tests/proptest-regressions` rather than a `proptest-regressions` folder
+// at the crate root. Every `proptest!` block opts in with
+// `#![proptest_config(crate::proptest_support::config())]`. Kept last so it
+// does not trip `clippy::items_after_test_module`.
+#[cfg(test)]
+pub(crate) mod proptest_support {
+    use proptest::test_runner::{Config, FileFailurePersistence};
+
+    pub(crate) fn config() -> Config {
+        Config {
+            failure_persistence: Some(Box::new(FileFailurePersistence::SourceParallel(
+                "tests/proptest-regressions",
+            ))),
+            ..Config::default()
+        }
+    }
+}

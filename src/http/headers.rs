@@ -99,6 +99,7 @@ mod tests {
     use proptest::prelude::*;
 
     proptest! {
+        #![proptest_config(crate::proptest_support::config())]
         /// redact then unredact with the same secrets restores the originals.
         #[test]
         fn prop_redact_unredact_round_trips(

@@ -249,6 +249,7 @@ mod tests {
     use proptest::prelude::*;
 
     proptest! {
+        #![proptest_config(crate::proptest_support::config())]
         /// generate_mock_path never panics and yields a bounded `.json`
         /// filename for arbitrary (even non-ASCII) method/url/body.
         #[test]

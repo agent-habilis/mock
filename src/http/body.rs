@@ -86,6 +86,7 @@ mod tests {
     use proptest::prelude::*;
 
     proptest! {
+        #![proptest_config(crate::proptest_support::config())]
         /// Arbitrary bytes survive a `parse_body` -> `serialize_body` round-trip
         /// for a binary content-type (UTF-8 stored as a string, else base64).
         #[test]

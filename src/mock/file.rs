@@ -68,6 +68,7 @@ mod tests {
     use proptest::prelude::*;
 
     proptest! {
+        #![proptest_config(crate::proptest_support::config())]
         /// `from_json` never panics on arbitrary bytes (it returns a Result).
         #[test]
         fn prop_mock_file_from_json_never_panics(
