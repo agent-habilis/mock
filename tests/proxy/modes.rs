@@ -41,6 +41,82 @@ async fn pass_mode_proxies_to_origin() {
 }
 
 //-
+// 1b. --rewrite-path: the origin receives the rewritten path, end-to-end.
+//-
+
+#[tokio::test]
+async fn rewrite_path_proxies_rewritten_path_to_origin() {
+    let echo = start_echo_server().await;
+    let origin = format!("http://{}", echo.addr);
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut args = make_test_args(&origin, Mode::Pass, tmp.path());
+    args.rewrite_path = vec![(
+        "/api/federated-gateway-public/graphql".to_string(),
+        "/graphql".to_string(),
+    )];
+    let mocker = start_mocker(args).await;
+
+    let client = build_client();
+    // The query must survive the rewrite verbatim; the matched prefix is swapped.
+    let resp = get(
+        &client,
+        &format!(
+            "http://{}/api/federated-gateway-public/graphql?op=Foo",
+            mocker.addr
+        ),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 200);
+    let json = read_body_json(resp).await;
+    // The echo origin reports the URL it actually received — proves the rewrite
+    // fired before proxying.
+    assert_eq!(json["url"], "/graphql?op=Foo");
+}
+
+#[tokio::test]
+async fn rewrite_path_leaves_non_matching_paths_untouched() {
+    let echo = start_echo_server().await;
+    let origin = format!("http://{}", echo.addr);
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut args = make_test_args(&origin, Mode::Pass, tmp.path());
+    // Segment-aware: `/api` must not rewrite the sibling `/apidocs`.
+    args.rewrite_path = vec![("/api".to_string(), "/v2".to_string())];
+    let mocker = start_mocker(args).await;
+
+    let client = build_client();
+    let resp = get(&client, &format!("http://{}/apidocs/index", mocker.addr)).await;
+
+    assert_eq!(resp.status(), 200);
+    let json = read_body_json(resp).await;
+    assert_eq!(json["url"], "/apidocs/index");
+}
+
+#[tokio::test]
+async fn rewrite_path_cannot_shadow_health_check() {
+    let echo = start_echo_server().await;
+    let origin = format!("http://{}", echo.addr);
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut args = make_test_args(&origin, Mode::Pass, tmp.path());
+    // A broad rule that, if applied before the health check, would rewrite the
+    // probe path away from its reserved value.
+    args.rewrite_path = vec![("/.well-known".to_string(), "/legacy".to_string())];
+    let mocker = start_mocker(args).await;
+
+    let client = build_client();
+    // Health is evaluated on the original path (query-insensitive), so the probe
+    // still returns the synthetic 200 OK rather than being proxied/rewritten.
+    let resp = get(
+        &client,
+        &format!("http://{}/.well-known/ready?ts=1", mocker.addr),
+    )
+    .await;
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(read_body(resp).await, b"OK");
+}
+
+//-
 // 2. Read mode: serves from mock
 //-
 

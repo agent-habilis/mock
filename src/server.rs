@@ -103,10 +103,12 @@ pub async fn handle_request(
         .path_and_query()
         .map_or_else(|| req.uri().path().to_string(), ToString::to_string);
 
-    output::status("Request", &format!("{connection_id} {method} {uri}"));
-
-    // Health checks
-    if uri == "/.well-known/live" || uri == "/.well-known/ready" {
+    // Health checks run on the ORIGINAL request path, before any rewrite, so a
+    // `--rewrite-path` rule can neither hijack a normal route into a synthetic
+    // 200 nor rewrite the reserved probe paths out from under the check. The
+    // query is ignored so `/.well-known/ready?ts=1` still matches.
+    let health_path = uri.split('?').next().unwrap_or(&uri);
+    if health_path == "/.well-known/live" || health_path == "/.well-known/ready" {
         let resp = build_response(
             200,
             b"OK".to_vec(),
@@ -118,6 +120,13 @@ pub async fn handle_request(
         output::response(&connection_id, 200, None);
         return Ok(resp);
     }
+
+    // Rewrite the path once, so both the mock-key lookup and the proxy URL see
+    // the rewritten path. A no-op when `--rewrite-path` was not given (rules
+    // empty). CORS below is path-independent, so its ordering is immaterial.
+    let uri = crate::http::rewrite::rewrite_path(&uri, &state.args.rewrite_path);
+
+    output::status("Request", &format!("{connection_id} {method} {uri}"));
 
     // CORS preflight.
     if state.args.cors && method == "OPTIONS" {
@@ -636,6 +645,7 @@ mod tests {
             redacted_headers: HashMap::new(),
             overwrite_response_headers: HashMap::new(),
             overwrite_request_headers: HashMap::new(),
+            rewrite_path: Vec::new(),
         }
     }
 

@@ -60,12 +60,33 @@ Run `ahm --help` for the full flag list. Point your client at the server (port
 | `--redacted-headers <json>`     | `{}`         | Header names to redact from mocks and logging.                          |
 | `--overwrite-request-headers <json>`  | `{host}` | Request headers to overwrite on the way to origin.                  |
 | `--overwrite-response-headers <json>` | `{}`     | Response headers to overwrite with the given values.                |
+| `--rewrite-path <a=>b,...>`     | —            | Rewrite matching path prefixes before lookup/proxy (`prefix=>replacement`, comma-separated, first match wins; query string preserved). See note below. |
 | `--update <off\|startup\|only>` | `off`        | Accepted for compatibility; the bulk mock-refresh pass is not yet implemented (mocks are left unchanged). |
 
 Every response carries `x-powered-by: mocker`, `x-mocker-request-id`,
 `x-mocker-response-from` (`Mock` or `Origin`), and — when served from disk —
 `x-mocker-mock-path`. Health checks live under `/.well-known/live` and
 `/.well-known/ready`.
+
+#### `--rewrite-path`
+
+Each rule is `prefix=>replacement`; rules are comma-separated and tried in
+order, first match wins. Notes:
+
+- **Matching is segment-aware.** `prefix` matches the request path only at a
+  segment boundary: `/api` matches `/api` and `/api/...`, but not `/apidocs`.
+- **Both halves must be absolute paths** starting with `/`; a prefix of exactly
+  `/` is rejected (it would match everything). Bad rules fail at startup.
+- **The matched prefix is swapped** for the replacement and the remainder is
+  kept, e.g. `/api/federated-gateway-public/graphql=>/graphql` turns
+  `/api/federated-gateway-public/graphql?op=Foo` into `/graphql?op=Foo`. The
+  query string is preserved verbatim.
+- **No escaping:** a `prefix` or `replacement` cannot itself contain `,` or `=>`.
+- Paths are matched in their **percent-encoded** form (no decoding/normalizing),
+  so a rule must use the same encoding the client sends.
+- The rewrite is applied **after** the health check (so a rule can never shadow
+  `/.well-known/live` or `/.well-known/ready`) and feeds both the mock-key lookup
+  and the proxied request — recorded mocks are keyed under the rewritten path.
 
 ### Mock file format
 

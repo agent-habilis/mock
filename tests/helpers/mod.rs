@@ -220,6 +220,7 @@ pub(crate) fn make_test_args(origin: &str, mode: Mode, mocks_dir: &Path) -> Vali
         redacted_headers: HashMap::new(),
         overwrite_response_headers: HashMap::new(),
         overwrite_request_headers: HashMap::new(),
+        rewrite_path: Vec::new(),
     }
 }
 

@@ -214,6 +214,10 @@ pub struct Args {
     /// (defaults to `{ "host": <origin host> }`)
     #[arg(long)]
     pub overwrite_request_headers: Option<String>,
+
+    /// Comma-separated path-rewrite rules: `prefix=>replacement,prefix2=>replacement2`
+    #[arg(long)]
+    pub rewrite_path: Option<String>,
 }
 
 /// Fully resolved and validated configuration handed to the server.
@@ -235,6 +239,8 @@ pub struct ValidatedArgs {
     pub redacted_headers: HashMap<String, serde_json::Value>,
     pub overwrite_response_headers: HashMap<String, serde_json::Value>,
     pub overwrite_request_headers: HashMap<String, serde_json::Value>,
+    /// First-match-wins `(prefix, replacement)` path rewrites; empty = no rewriting.
+    pub rewrite_path: Vec<(String, String)>,
 }
 
 impl Args {
@@ -268,6 +274,11 @@ impl Args {
             None => default_request_headers(&origin),
         };
 
+        let rewrite_path = match &self.rewrite_path {
+            Some(raw) => parse_rewrite_rules(raw)?,
+            None => Vec::new(),
+        };
+
         Ok(ValidatedArgs {
             origin,
             port: self.port,
@@ -284,6 +295,7 @@ impl Args {
             redacted_headers,
             overwrite_response_headers,
             overwrite_request_headers,
+            rewrite_path,
         })
     }
 }
@@ -385,6 +397,44 @@ fn is_dotted_path(prefix: &str, key: &str) -> bool {
         })
 }
 
+/// Parse `--rewrite-path` into ordered `(prefix, replacement)` rules. Empty
+/// entries (e.g. a trailing comma) are skipped. Both halves are trimmed and must
+/// be absolute paths (start with `/`); a prefix of exactly `/` is rejected
+/// because it would match every request as a silent catch-all. Validating at
+/// startup means a typo fails loudly rather than silently corrupting the proxy
+/// URL (a non-`/` replacement would otherwise concatenate into the origin host)
+/// or never matching per-request.
+///
+/// Rules are split on `,` and `=>` with no escaping, so neither a prefix nor a
+/// replacement may itself contain `,` or `=>`. This is sufficient for the
+/// path-prefix rules the flag is meant for.
+fn parse_rewrite_rules(raw: &str) -> Result<Vec<(String, String)>, String> {
+    let mut rules = Vec::new();
+    for rule in raw.split(',') {
+        let rule = rule.trim();
+        if rule.is_empty() {
+            continue;
+        }
+        let (prefix, replacement) = rule.split_once("=>").ok_or_else(|| {
+            format!("invalid --rewrite-path entry '{rule}', expected 'prefix=>replacement'")
+        })?;
+        let prefix = prefix.trim();
+        let replacement = replacement.trim();
+        if !prefix.starts_with('/') || prefix == "/" {
+            return Err(format!(
+                "invalid --rewrite-path prefix '{prefix}', expected an absolute path under '/' (not just '/')"
+            ));
+        }
+        if !replacement.starts_with('/') {
+            return Err(format!(
+                "invalid --rewrite-path replacement '{replacement}', expected an absolute path starting with '/'"
+            ));
+        }
+        rules.push((prefix.to_string(), replacement.to_string()));
+    }
+    Ok(rules)
+}
+
 /// Parse one of the JSON header flags into a `{ name: value }` map.
 fn parse_json_headers(
     flag: &str,
@@ -463,6 +513,7 @@ mod tests {
             redacted_headers: "{}".to_string(),
             overwrite_response_headers: "{}".to_string(),
             overwrite_request_headers: None,
+            rewrite_path: None,
         }
     }
 
@@ -482,6 +533,8 @@ mod tests {
             "{\"x-a\":\"b\"}",
             "--overwrite-request-headers",
             "{\"host\":\"h\"}",
+            "--rewrite-path",
+            "/api/x=>/x",
             "--mode",
             "read-write",
             "--logging",
@@ -493,9 +546,83 @@ mod tests {
         assert_eq!(args.origin.as_deref(), Some("http://example.com"));
         assert_eq!(args.mocks_dir, "/tmp/m");
         assert_eq!(args.mock_keys, "url,method,body");
+        assert_eq!(args.rewrite_path.as_deref(), Some("/api/x=>/x"));
         assert_eq!(args.mode, Mode::ReadWrite);
         assert_eq!(args.logging, LogLevel::Warn);
         assert!(args.cors);
+    }
+
+    #[test]
+    fn rewrite_path_parses_ordered_rules() {
+        let mut args = args_for("http://example.com");
+        args.rewrite_path = Some(
+            "/api/federated-gateway-public/graphql=>/graphql, /api/federated-gateway-protected/graphql=>/graphql"
+                .to_string(),
+        );
+        let validated = args.validate().unwrap();
+        assert_eq!(
+            validated.rewrite_path,
+            vec![
+                (
+                    "/api/federated-gateway-public/graphql".to_string(),
+                    "/graphql".to_string()
+                ),
+                (
+                    "/api/federated-gateway-protected/graphql".to_string(),
+                    "/graphql".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn rewrite_path_defaults_to_empty() {
+        let validated = args_for("http://example.com").validate().unwrap();
+        assert!(validated.rewrite_path.is_empty());
+    }
+
+    /// Validate `--rewrite-path raw` and assert the error message contains
+    /// `needle`, so each rejection is checked for the RIGHT reason (not just
+    /// that some error fired).
+    fn assert_rewrite_err(raw: &str, needle: &str) {
+        let mut args = args_for("http://example.com");
+        args.rewrite_path = Some(raw.to_string());
+        let err = args
+            .validate()
+            .expect_err(&format!("expected --rewrite-path '{raw}' to be rejected"));
+        assert!(
+            err.contains(needle),
+            "error for '{raw}' was '{err}', expected to contain '{needle}'"
+        );
+    }
+
+    #[test]
+    fn rewrite_path_rejects_bad_syntax() {
+        // Missing `=>` separator.
+        assert_rewrite_err("/api/missing-arrow", "expected 'prefix=>replacement'");
+        // Empty prefix.
+        assert_rewrite_err("=>/replacement", "prefix");
+        // Prefix not an absolute path.
+        assert_rewrite_err("api=>/x", "prefix");
+        // Bare `/` prefix would match everything (silent catch-all).
+        assert_rewrite_err("/=>/x", "prefix");
+        // Empty replacement.
+        assert_rewrite_err("/api=>", "replacement");
+        // Replacement not an absolute path (the host-corruption case).
+        assert_rewrite_err("/api=>x", "replacement");
+    }
+
+    #[test]
+    fn rewrite_path_trims_each_half() {
+        // Spaces around the arrow are tolerated; the stored rule is trimmed so
+        // it still matches real paths at request time.
+        let mut args = args_for("http://example.com");
+        args.rewrite_path = Some("/api => /v2".to_string());
+        let validated = args.validate().unwrap();
+        assert_eq!(
+            validated.rewrite_path,
+            vec![("/api".to_string(), "/v2".to_string())]
+        );
     }
 
     #[test]
