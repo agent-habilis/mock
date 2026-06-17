@@ -152,7 +152,12 @@ const MOCK_KEYS_DEFAULT: &str = "method,url";
 /// Records HTTP interactions as a reverse proxy and replays them, so tests and
 /// local development don't need to reach the real upstream service.
 #[derive(Parser, Debug, Clone)]
-#[command(name = "ahm", version, after_help = "a tool by agent-habilis █🫈")]
+#[command(
+    name = "ahm",
+    version,
+    after_help = "a tool by agent-habilis █🫈",
+    arg_required_else_help = true
+)]
 pub struct Args {
     /// Origin base URL to proxy requests to (defaults to localhost in read mode)
     #[arg(long)]
@@ -637,6 +642,20 @@ mod tests {
         assert_eq!(args.mock_keys, "method,url");
         assert_eq!(args.logging, LogLevel::Verbose);
         assert!(!args.cors);
+    }
+
+    #[test]
+    fn no_args_shows_help() {
+        // `arg_required_else_help` makes a bare invocation print help and exit,
+        // rather than parsing to defaults and failing `validate()` on the empty
+        // origin. Clap surfaces this as the help-on-missing-input error kind.
+        let err = Args::try_parse_from(["ahm"]).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+        // The rendered output is the usage banner, not a validation error.
+        assert!(err.to_string().contains("Usage: ahm"));
     }
 
     #[test]
