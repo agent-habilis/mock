@@ -49,22 +49,33 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use args::{Args, LogLevel, Update, ValidatedArgs};
+use args::{Args, Command, LogLevel, Update, ValidatedArgs};
 use mock::manager::MockManager;
 use server::{AppState, handle_request};
 use util::output;
 
-/// Parse `argv`, validate it, and run the server to completion.
+/// Parse `argv`, then either print the manual or run the server to completion.
 ///
 /// This is the entire body of the `ahm` binary; it is public so the thin
 /// `src/main.rs` shim (which owns only process-level concerns) can call it.
+/// With no subcommand the top-level flags drive the server (the default); the
+/// only subcommand, `man`, prints the embedded manual and exits.
 ///
 /// # Errors
 /// Returns an error if the arguments fail validation (see [`Args::validate`])
 /// or the server cannot bind its port.
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse().validate()?;
-    serve(args).await
+    let args = Args::parse();
+    match args.command {
+        // The manual is embedded at compile time (`include_str!`), so the
+        // binary documents itself with no repo checkout. Printed before
+        // validation, so `ahm man` never requires a valid `--origin`.
+        Some(Command::Man) => {
+            print!("{}", include_str!("../docs/manual.txt"));
+            Ok(())
+        }
+        None => serve(args.validate()?).await,
+    }
 }
 
 /// The `ahm` clap command tree, for offline man-page generation. Consumed by

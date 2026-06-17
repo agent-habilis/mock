@@ -11,7 +11,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Record/playback strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -147,6 +147,18 @@ const MAX_DELAY_MS: u64 = 3_600_000;
 /// Default mock keys: request method + URL.
 const MOCK_KEYS_DEFAULT: &str = "method,url";
 
+/// `ahm` subcommands. Optional: with none given, `ahm` runs the server from the
+/// top-level flags (the default, which preserves the flat `ahm --origin …`
+/// invocation).
+#[derive(Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Print the full `ahm` manual to stdout.
+    ///
+    /// A self-contained man page covering every flag, mode, and common
+    /// workflow, embedded in the binary so it works with no repo checkout.
+    Man,
+}
+
 /// HTTP mock server for development and stable E2E tests.
 ///
 /// Records HTTP interactions as a reverse proxy and replays them, so tests and
@@ -159,6 +171,10 @@ const MOCK_KEYS_DEFAULT: &str = "method,url";
     arg_required_else_help = true
 )]
 pub struct Args {
+    /// Subcommand to run; with none given, the server runs from the flags below.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Origin base URL to proxy requests to (defaults to localhost in read mode)
     #[arg(long)]
     pub origin: Option<String>,
@@ -503,6 +519,7 @@ mod tests {
 
     fn args_for(origin: &str) -> Args {
         Args {
+            command: None,
             origin: Some(origin.to_string()),
             port: 8273,
             mocks_dir: ".".to_string(),

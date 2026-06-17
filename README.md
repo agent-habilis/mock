@@ -28,8 +28,9 @@ cargo build --release    # binary at target/release/ahm
 ahm --origin http://example.com --mocks-dir ./mocks --mode read-write
 ```
 
-Run `ahm --help` for the full flag list. Point your client at the server (port
-`8273` by default) instead of the real origin.
+Run `ahm --help` for the full flag list, or `ahm man` for the complete manual.
+Point your client at the server (port `8273` by default) instead of the real
+origin.
 
 ### Modes (`--mode`, default `pass`)
 

@@ -1,0 +1,204 @@
+AHM(1)                        Agent Habilis Mock                        AHM(1)
+
+
+
+NAME
+       ahm - HTTP mock server for development and stable E2E tests
+
+SYNOPSIS
+       ahm [--origin URL] [--port N] [--mocks-dir DIR] [--mode MODE]
+           [--update off|startup|only] [--delay MS] [--throttle BYTES/S]
+           [--retries N] [--mock-keys A,B,...] [--logging LEVEL] [--cors]
+           [--proxy URL] [--redacted-headers JSON]
+           [--overwrite-response-headers JSON] [--overwrite-request-headers JSON]
+           [--rewrite-path PREFIX=>REPLACEMENT,...]
+
+       ahm man
+
+       ahm --help | --version
+
+DESCRIPTION
+       ahm (agent-habilis-mock) is a self-initializing fake implemented as a
+       reverse proxy: it records HTTP interactions to the filesystem so they
+       can be replayed later, removing the need to reach the real upstream
+       service during local development or in broad-stack tests.
+
+       Point your client at the server (port 8273 by default) instead of the
+       real origin. The default mode is pass (transparent proxy, no recording);
+       choose another mode to read and/or write mocks (see "MODES").
+
+       With no subcommand, ahm runs the server from the flags below. The only
+       subcommand is man, which prints this manual.
+
+       RESPONSE HEADERS
+              Every response carries x-powered-by: mocker, a unique
+              x-mocker-request-id, and x-mocker-response-from set to Mock or
+              Origin. A response served from disk also carries
+              x-mocker-mock-path with the source file.
+
+       HEALTH CHECKS
+              Liveness and readiness probes live at /.well-known/live and
+              /.well-known/ready. They are answered directly by ahm and are
+              never proxied, recorded, or path-rewritten.
+
+MODES
+       Selected with --mode (default pass).
+
+       pass        Always fetch from origin (no mock read or write).
+       read        Serve a mock if one exists, otherwise 404. With no --origin
+                   set, origin defaults to http://localhost in this mode.
+       write       Always fetch from origin and overwrite the mock.
+       read-write  Serve a mock if one exists, otherwise fetch, save, and serve.
+       read-pass   Serve a mock if one exists, otherwise fetch (no save).
+       pass-read   Fetch from origin; on a 5xx or network error, fall back to a
+                   mock.
+
+OPTIONS
+       --origin URL
+              Origin base URL to proxy requests to. Must use the http:// or
+              https:// scheme and include a host. Defaults to http://localhost
+              in read mode; required otherwise.
+
+       --port N
+              Port the server listens on. Default 8273.
+
+       --mocks-dir DIR
+              Directory to read and write mocked responses. Default the current
+              directory (.). Resolved to an absolute path at startup.
+
+       --mode MODE
+              Record/playback mode: pass, read, write, read-write, read-pass,
+              or pass-read. Default pass. See "MODES".
+
+       --update off|startup|only
+              Bulk mock-refresh behavior at startup. Accepted for
+              compatibility; the refresh pass is not yet implemented, so mocks
+              are left unchanged. Default off.
+
+       --delay MS
+              Synthetic delay added to every response, in milliseconds. Default
+              0. Maximum 3,600,000 (one hour).
+
+       --throttle BYTES/S
+              Synthetic throughput cap; the response is streamed in paced
+              chunks. A positive integer caps bytes/second; Infinity (the
+              default) means no cap.
+
+       --retries N
+              Maximum retries to origin while the response is not a 2xx.
+              Default 0.
+
+       --mock-keys A,B,...
+              Comma-separated request attributes used to key mocks: url,
+              method, headers, body, or a dotted body.* / header.* path (e.g.
+              body.variables.id, header.authorization). Default method,url.
+
+       --logging LEVEL
+              Logging verbosity: silent, error, warn, or verbose. Default
+              verbose (error, warn, and info).
+
+       --cors
+              Send CORS headers between client and proxy. Bare flag; off by
+              default.
+
+       --proxy URL
+              Upstream HTTP proxy to forward origin requests through.
+
+       --redacted-headers JSON
+              JSON object of header names to redact from mocks and logging.
+              Default {}.
+
+       --overwrite-response-headers JSON
+              JSON object of response headers to overwrite with the given
+              values. Default {}.
+
+       --overwrite-request-headers JSON
+              JSON object of request headers to overwrite on the request to
+              origin. Defaults to { "host": <origin host> }.
+
+       --rewrite-path PREFIX=>REPLACEMENT,...
+              Rewrite matching path prefixes before mock lookup and proxying.
+              See "PATH REWRITING".
+
+PATH REWRITING
+       Each rule is PREFIX=>REPLACEMENT; rules are comma-separated and tried in
+       order, first match wins.
+
+       •  Matching is segment-aware. A prefix matches the request path only at
+          a segment boundary: /api matches /api and /api/..., but not /apidocs.
+       •  Both halves must be absolute paths starting with /. A prefix of
+          exactly / is rejected (it would match everything). Bad rules fail at
+          startup rather than silently corrupting the proxy URL.
+       •  The matched prefix is swapped for the replacement and the remainder
+          is kept, e.g. /api/federated-gateway-public/graphql=>/graphql turns
+          /api/federated-gateway-public/graphql?op=Foo into /graphql?op=Foo.
+          The query string is preserved verbatim.
+       •  No escaping: a prefix or replacement cannot itself contain , or =>.
+       •  Paths are matched in their percent-encoded form, so a rule must use
+          the same encoding the client sends.
+       •  The rewrite is applied after the health check (so a rule can never
+          shadow /.well-known/live or /.well-known/ready) and feeds both the
+          mock-key lookup and the proxied request — recorded mocks are keyed
+          under the rewritten path.
+
+MOCK FILE FORMAT
+       Each interaction is one pretty-printed JSON file named
+       {hash}-{label}.json:
+
+              {
+                "request":  { "method": "GET", "url": "/users",
+                              "headers": {}, "body": null },
+                "response": { "statusCode": 200, "headers": {},
+                              "body": { "id": 1 } }
+              }
+
+       JSON bodies are stored inline; binary bodies are stored base64-encoded
+       as { "encoding": "base64", "data": "..." }.
+
+EXAMPLES
+       Record and replay against a real origin:
+
+              ahm --origin http://example.com --mocks-dir ./mocks --mode read-write
+
+       Replay only (serve recorded mocks, 404 on a miss):
+
+              ahm --mocks-dir ./mocks --mode read
+
+       Resilient proxy (fetch live, fall back to a mock on a 5xx or outage):
+
+              ahm --origin http://example.com --mocks-dir ./mocks --mode pass-read
+
+       Key mocks by method, URL, and a GraphQL operation field:
+
+              ahm --origin http://example.com --mode read-write \
+                  --mock-keys method,url,body.operationName
+
+       Strip an internal prefix before lookup and proxying:
+
+              ahm --origin http://example.com --mode read-write \
+                  --rewrite-path /api/federated-gateway-public/graphql=>/graphql
+
+       Read this manual or the version:
+
+              ahm man
+              ahm --version
+
+EXIT STATUS
+       0      Success (clean shutdown on Ctrl-C, or man printed).
+       non-0  An error occurred — invalid arguments, an unbindable port, or a
+              runtime failure. Fatal errors are printed to stderr.
+
+FILES
+       --mocks-dir DIR (default the current directory) holds one
+       {hash}-{label}.json file per recorded interaction. The directory is
+       resolved to an absolute path at startup.
+
+SEE ALSO
+       ahm(1)  The conventional per-flag roff man page, generated from the
+               command tree by cargo task man. This page (ahm man) is its
+               self-contained companion and adds the conceptual material the
+               roff page omits.
+
+
+
+agent-habilis-mock                                                      AHM(1)
