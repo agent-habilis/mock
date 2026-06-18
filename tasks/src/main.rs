@@ -11,6 +11,7 @@ mod install;
 mod lint;
 mod man;
 mod proptest;
+mod release;
 mod test;
 mod util;
 
@@ -45,6 +46,15 @@ enum Task {
     Clean,
     /// Build and install the `ahm` binary.
     Install,
+    /// Build the release binary, or cut a release with `cargo-release`.
+    ///
+    /// `cargo-release` level (`patch`|`minor`|`major`|`x.y.z`) plus extra flags
+    /// such as `--execute`. Dry run by default; with no args this just builds
+    /// the release binary.
+    Release {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Generate roff man pages into target/man/.
     Man,
 }
@@ -68,6 +78,7 @@ fn main() -> ExitCode {
         Task::Coverage => coverage::run(&sh),
         Task::Clean => clean::run(&sh),
         Task::Install => install::run(&sh),
+        Task::Release { args } => release::run(&sh, &args),
         Task::Man => man::run(),
     };
 

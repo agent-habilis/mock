@@ -132,7 +132,18 @@ cargo task proptest    # property-based (proptest) tests only
 cargo task fmt         # format
 cargo task lint        # clippy --all-targets -D warnings
 cargo task coverage    # cargo-llvm-cov report
+cargo task release     # build target/release/ahm (no args)
 ```
+
+Cutting a release wraps [`cargo-release`](https://github.com/crate-ci/cargo-release):
+
+```bash
+cargo task release patch              # dry run: preview a patch bump
+cargo task release patch --execute    # bump Cargo.toml, commit, tag vX.Y.Z, push
+```
+
+Pushing the `vX.Y.Z` tag triggers `.github/workflows/release.yml`, which builds
+the binaries, creates the GitHub release, and updates `Formula/ahm.rb`.
 
 Testing has three layers:
 
