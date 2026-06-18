@@ -2,9 +2,11 @@
 //!
 //! Built on `clap`'s derive API (the same arg library the sibling `ahs` binary
 //! uses), so the long flags are idiomatic kebab-case: `--mocks-dir`,
-//! `--mock-keys`, `--overwrite-request-headers`, and so on. [`Args`] is the raw
-//! clap view; [`Args::validate`] turns it into a [`ValidatedArgs`] with resolved
-//! paths, parsed JSON header maps, and a checked mock-key set.
+//! `--mock-keys`, `--overwrite-request-headers`, and so on. [`Cli`] is the
+//! top-level parser (the required `serve`/`man` subcommand); [`ServeArgs`] is
+//! the raw clap view of the server flags, and [`ServeArgs::validate`] turns it
+//! into a [`ValidatedArgs`] with resolved paths, parsed JSON header maps, and a
+//! checked mock-key set.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -147,18 +149,6 @@ const MAX_DELAY_MS: u64 = 3_600_000;
 /// Default mock keys: request method + URL.
 const MOCK_KEYS_DEFAULT: &str = "method,url";
 
-/// `ahm` subcommands. Optional: with none given, `ahm` runs the server from the
-/// top-level flags (the default, which preserves the flat `ahm --origin …`
-/// invocation).
-#[derive(Subcommand, Debug, Clone)]
-pub enum Command {
-    /// Print the full `ahm` manual to stdout.
-    ///
-    /// A self-contained man page covering every flag, mode, and common
-    /// workflow, embedded in the binary so it works with no repo checkout.
-    Man,
-}
-
 /// HTTP mock server for development and stable E2E tests.
 ///
 /// Records HTTP interactions as a reverse proxy and replays them, so tests and
@@ -170,11 +160,34 @@ pub enum Command {
     after_help = "a tool by agent-habilis █🫈",
     arg_required_else_help = true
 )]
-pub struct Args {
-    /// Subcommand to run; with none given, the server runs from the flags below.
+pub struct Cli {
     #[command(subcommand)]
-    pub command: Option<Command>,
+    pub command: Command,
+}
 
+/// `ahm` subcommands. A subcommand is required: `serve` runs the mock server,
+/// `man` prints the embedded manual.
+#[derive(Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Run the HTTP mock server.
+    ///
+    /// Boxed so the large `serve` flag set doesn't bloat the empty `Man`
+    /// variant (clippy's `large_enum_variant`); `validate()` derefs through it.
+    Serve(Box<ServeArgs>),
+
+    /// Print the full `ahm` manual to stdout.
+    ///
+    /// A self-contained man page covering every flag, mode, and common
+    /// workflow, embedded in the binary so it works with no repo checkout.
+    Man,
+}
+
+/// Flags for the `serve` subcommand: everything that configures the running
+/// mock server. [`ServeArgs::validate`] turns this raw clap view into a
+/// [`ValidatedArgs`] with resolved paths, parsed JSON header maps, and a
+/// checked mock-key set.
+#[derive(clap::Args, Debug, Clone)]
+pub struct ServeArgs {
     /// Origin base URL to proxy requests to (defaults to localhost in read mode)
     #[arg(long)]
     pub origin: Option<String>,
@@ -264,7 +277,7 @@ pub struct ValidatedArgs {
     pub rewrite_path: Vec<(String, String)>,
 }
 
-impl Args {
+impl ServeArgs {
     /// Resolve and type-check the raw arguments.
     ///
     /// # Errors
@@ -517,9 +530,8 @@ mod tests {
         }
     }
 
-    fn args_for(origin: &str) -> Args {
-        Args {
-            command: None,
+    fn args_for(origin: &str) -> ServeArgs {
+        ServeArgs {
             origin: Some(origin.to_string()),
             port: 8273,
             mocks_dir: ".".to_string(),
@@ -539,10 +551,25 @@ mod tests {
         }
     }
 
+    /// Destructure a parsed [`Cli`] into its [`ServeArgs`], panicking if the
+    /// parse did not yield a `serve` subcommand. Keeps the parse-and-unwrap
+    /// boilerplate out of the per-flag assertions.
+    fn serve_args_from<I, T>(argv: I) -> ServeArgs
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        match Cli::try_parse_from(argv).unwrap().command {
+            Command::Serve(serve) => *serve,
+            Command::Man => panic!("expected `serve`, got `man`"),
+        }
+    }
+
     #[test]
     fn parses_kebab_case_flags() {
-        let args = Args::try_parse_from([
+        let args = serve_args_from([
             "ahm",
+            "serve",
             "--origin",
             "http://example.com",
             "--mocks-dir",
@@ -562,8 +589,7 @@ mod tests {
             "--logging",
             "warn",
             "--cors",
-        ])
-        .unwrap();
+        ]);
 
         assert_eq!(args.origin.as_deref(), Some("http://example.com"));
         assert_eq!(args.mocks_dir, "/tmp/m");
@@ -649,7 +675,7 @@ mod tests {
 
     #[test]
     fn default_values_match_js() {
-        let args = Args::try_parse_from(["ahm", "--origin", "http://example.com"]).unwrap();
+        let args = serve_args_from(["ahm", "serve", "--origin", "http://example.com"]);
         assert_eq!(args.port, 8273);
         assert_eq!(args.mode, Mode::Pass);
         assert_eq!(args.update, Update::Off);
@@ -663,16 +689,25 @@ mod tests {
 
     #[test]
     fn no_args_shows_help() {
-        // `arg_required_else_help` makes a bare invocation print help and exit,
-        // rather than parsing to defaults and failing `validate()` on the empty
-        // origin. Clap surfaces this as the help-on-missing-input error kind.
-        let err = Args::try_parse_from(["ahm"]).unwrap_err();
+        // A subcommand is required, and `arg_required_else_help` makes a bare
+        // invocation print help and exit rather than erroring on the missing
+        // subcommand. Clap surfaces this as the help-on-missing-input error kind.
+        let err = Cli::try_parse_from(["ahm"]).unwrap_err();
         assert_eq!(
             err.kind(),
             clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         );
         // The rendered output is the usage banner, not a validation error.
         assert!(err.to_string().contains("Usage: ahm"));
+    }
+
+    #[test]
+    fn serve_without_origin_outside_read_mode_still_fails_validation() {
+        // The origin requirement moved onto `ServeArgs` with the subcommand
+        // split; confirm it still fires (e.g. `ahm serve` with no --origin in
+        // the default `pass` mode), so the restructure didn't drop the check.
+        let args = serve_args_from(["ahm", "serve"]);
+        assert!(args.validate().is_err());
     }
 
     #[test]

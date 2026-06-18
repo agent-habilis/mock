@@ -29,6 +29,7 @@ fn man_prints_manual_to_stdout() {
         "OPTIONS",
         "EXAMPLES",
         "EXIT STATUS",
+        "ahm serve",
         "ahm man",
         "--origin",
         "--mocks-dir",

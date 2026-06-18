@@ -11,13 +11,14 @@
 //! a server in-process with [`serve`].
 //!
 //! ```no_run
-//! use agent_habilis_mock::args::Args;
+//! use agent_habilis_mock::args::{Cli, Command};
 //! use clap::Parser;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Parse argv (or build `Args` directly), validate, then serve until Ctrl-C.
-//! let args = Args::parse().validate()?;
-//! agent_habilis_mock::serve(args).await?;
+//! // Parse argv, then validate the `serve` flags and serve until Ctrl-C.
+//! if let Command::Serve(serve_args) = Cli::parse().command {
+//!     agent_habilis_mock::serve(serve_args.validate()?).await?;
+//! }
 //! # Ok(())
 //! # }
 //! ```
@@ -49,7 +50,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use args::{Args, Command, LogLevel, Update, ValidatedArgs};
+use args::{Cli, Command, LogLevel, Update, ValidatedArgs};
 use mock::manager::MockManager;
 use server::{AppState, handle_request};
 use util::output;
@@ -62,19 +63,19 @@ use util::output;
 /// only subcommand, `man`, prints the embedded manual and exits.
 ///
 /// # Errors
-/// Returns an error if the arguments fail validation (see [`Args::validate`])
-/// or the server cannot bind its port.
+/// Returns an error if the arguments fail validation (see
+/// [`ServeArgs::validate`](args::ServeArgs::validate)) or the server cannot
+/// bind its port.
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
-    match args.command {
+    match Cli::parse().command {
+        Command::Serve(serve_args) => serve(serve_args.validate()?).await,
         // The manual is embedded at compile time (`include_str!`), so the
-        // binary documents itself with no repo checkout. Printed before
-        // validation, so `ahm man` never requires a valid `--origin`.
-        Some(Command::Man) => {
+        // binary documents itself with no repo checkout. It carries no flags,
+        // so `ahm man` never touches `--origin` or validation.
+        Command::Man => {
             print!("{}", include_str!("../docs/manual.txt"));
             Ok(())
         }
-        None => serve(args.validate()?).await,
     }
 }
 
@@ -83,7 +84,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// `clap_mangen`; never reachable from the shipped binary.
 #[must_use]
 pub fn cli_command() -> clap::Command {
-    <Args as clap::CommandFactory>::command()
+    <Cli as clap::CommandFactory>::command()
 }
 
 /// Configure logging from `args`, then bind and serve requests until Ctrl-C.

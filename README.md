@@ -25,12 +25,13 @@ cargo build --release    # binary at target/release/ahm
 ## Usage
 
 ```bash
-ahm --origin http://example.com --mocks-dir ./mocks --mode read-write
+ahm serve --origin http://example.com --mocks-dir ./mocks --mode read-write
 ```
 
-Run `ahm --help` for the full flag list, or `ahm man` for the complete manual.
-Point your client at the server (port `8273` by default) instead of the real
-origin.
+`ahm` has two subcommands: `serve` runs the mock server (all flags below live
+under it) and `man` prints the complete manual. Run `ahm serve --help` for the
+full flag list. Point your client at the server (port `8273` by default)
+instead of the real origin.
 
 ### Modes (`--mode`, default `pass`)
 
@@ -109,12 +110,13 @@ The crate is also a library: `serve` drives a server in-process, which is how
 the integration tests exercise it.
 
 ```rust,no_run
-use agent_habilis_mock::args::Args;
+use agent_habilis_mock::args::{Cli, Command};
 use clap::Parser;
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-let args = Args::parse().validate()?;
-agent_habilis_mock::serve(args).await?;
+if let Command::Serve(serve_args) = Cli::parse().command {
+    agent_habilis_mock::serve(serve_args.validate()?).await?;
+}
 # Ok(())
 # }
 ```

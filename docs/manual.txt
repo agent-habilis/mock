@@ -6,12 +6,13 @@ NAME
        ahm - HTTP mock server for development and stable E2E tests
 
 SYNOPSIS
-       ahm [--origin URL] [--port N] [--mocks-dir DIR] [--mode MODE]
-           [--update off|startup|only] [--delay MS] [--throttle BYTES/S]
-           [--retries N] [--mock-keys A,B,...] [--logging LEVEL] [--cors]
-           [--proxy URL] [--redacted-headers JSON]
-           [--overwrite-response-headers JSON] [--overwrite-request-headers JSON]
-           [--rewrite-path PREFIX=>REPLACEMENT,...]
+       ahm serve [--origin URL] [--port N] [--mocks-dir DIR] [--mode MODE]
+                 [--update off|startup|only] [--delay MS] [--throttle BYTES/S]
+                 [--retries N] [--mock-keys A,B,...] [--logging LEVEL] [--cors]
+                 [--proxy URL] [--redacted-headers JSON]
+                 [--overwrite-response-headers JSON]
+                 [--overwrite-request-headers JSON]
+                 [--rewrite-path PREFIX=>REPLACEMENT,...]
 
        ahm man
 
@@ -27,8 +28,8 @@ DESCRIPTION
        real origin. The default mode is pass (transparent proxy, no recording);
        choose another mode to read and/or write mocks (see "MODES").
 
-       With no subcommand, ahm runs the server from the flags below. The only
-       subcommand is man, which prints this manual.
+       A subcommand is required: serve runs the mock server (its flags are
+       listed under "OPTIONS"); man prints this manual.
 
        RESPONSE HEADERS
               Every response carries x-powered-by: mocker, a unique
@@ -54,6 +55,8 @@ MODES
                    mock.
 
 OPTIONS
+       All options below belong to the serve subcommand (ahm serve --origin …).
+
        --origin URL
               Origin base URL to proxy requests to. Must use the http:// or
               https:// scheme and include a host. Defaults to http://localhost
@@ -158,24 +161,26 @@ MOCK FILE FORMAT
 EXAMPLES
        Record and replay against a real origin:
 
-              ahm --origin http://example.com --mocks-dir ./mocks --mode read-write
+              ahm serve --origin http://example.com --mocks-dir ./mocks \
+                  --mode read-write
 
        Replay only (serve recorded mocks, 404 on a miss):
 
-              ahm --mocks-dir ./mocks --mode read
+              ahm serve --mocks-dir ./mocks --mode read
 
        Resilient proxy (fetch live, fall back to a mock on a 5xx or outage):
 
-              ahm --origin http://example.com --mocks-dir ./mocks --mode pass-read
+              ahm serve --origin http://example.com --mocks-dir ./mocks \
+                  --mode pass-read
 
        Key mocks by method, URL, and a GraphQL operation field:
 
-              ahm --origin http://example.com --mode read-write \
+              ahm serve --origin http://example.com --mode read-write \
                   --mock-keys method,url,body.operationName
 
        Strip an internal prefix before lookup and proxying:
 
-              ahm --origin http://example.com --mode read-write \
+              ahm serve --origin http://example.com --mode read-write \
                   --rewrite-path /api/federated-gateway-public/graphql=>/graphql
 
        Read this manual or the version:
