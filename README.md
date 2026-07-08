@@ -9,7 +9,7 @@ during local development or in
 [broad-stack tests](https://martinfowler.com/bliki/BroadStackTest.html), removing
 the need to reach the real upstream service.
 
-It is written in Rust and ships as a single binary, `ahm`. Command-line flags
+It is written in Rust and ships as a single binary, `agent-mock`. Command-line flags
 are idiomatic kebab-case.
 
 ## Installation
@@ -19,17 +19,17 @@ are idiomatic kebab-case.
 cargo install --git https://github.com/agent-habilis/mock --locked
 
 # Or, from a checkout
-cargo build --release    # binary at target/release/ahm
+cargo build --release    # binary at target/release/agent-mock
 ```
 
 ## Usage
 
 ```bash
-ahm serve --origin http://example.com --mocks-dir ./mocks --mode read-write
+agent-mock serve --origin http://example.com --mocks-dir ./mocks --mode read-write
 ```
 
-`ahm` has two subcommands: `serve` runs the mock server (all flags below live
-under it) and `man` prints the complete manual. Run `ahm serve --help` for the
+`agent-mock` has two subcommands: `serve` runs the mock server (all flags below live
+under it) and `man` prints the complete manual. Run `agent-mock serve --help` for the
 full flag list. Point your client at the server (port `8273` by default)
 instead of the real origin.
 
@@ -132,7 +132,7 @@ cargo task proptest    # property-based (proptest) tests only
 cargo task fmt         # format
 cargo task lint        # clippy --all-targets -D warnings
 cargo task coverage    # cargo-llvm-cov report
-cargo task release     # build target/release/ahm (no args)
+cargo task release     # build target/release/agent-mock (no args)
 ```
 
 Cutting a release wraps [`cargo-release`](https://github.com/crate-ci/cargo-release):
@@ -143,7 +143,7 @@ cargo task release patch --execute    # bump Cargo.toml, commit, tag vX.Y.Z, pus
 ```
 
 Pushing the `vX.Y.Z` tag triggers `.github/workflows/release.yml`, which builds
-the binaries, creates the GitHub release, and updates `Formula/ahm.rb`.
+the binaries, creates the GitHub release, and updates `Formula/agent-mock.rb`.
 
 Testing has three layers:
 
@@ -153,7 +153,7 @@ Testing has three layers:
   redaction, mock-path generation, and argument parsing — asserting invariants
   (no panics, bounded `.json` filenames, idempotent round-trips). They run as
   part of `cargo test`; `cargo task proptest` runs just them.
-- **Integration tests** under `tests/` start a real `ahm` server and a stub
+- **Integration tests** under `tests/` start a real `agent-mock` server and a stub
   origin in-process and assert protocol- and proxy-level behavior (including
   RFC 9112 §3.2.2 absolute-form request-targets through an upstream proxy, and
   paced throttled delivery). They are the primary guard on the external contract.

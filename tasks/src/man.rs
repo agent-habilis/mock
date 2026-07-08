@@ -3,8 +3,8 @@ use agent_habilis_mock::util::output;
 use crate::TaskOutcome;
 use crate::util::repo_root;
 
-/// Generated straight from the `ahm` clap command tree via `clap_mangen`, which
-/// lives in this dev-only crate (never the shipped `ahm`). Output is a build
+/// Generated straight from the `agent-mock` clap command tree via `clap_mangen`, which
+/// lives in this dev-only crate (never the shipped `agent-mock`). Output is a build
 /// artifact (`target/man/`), not checked in.
 pub(crate) fn run() -> TaskOutcome {
     output::status("Generating", "man pages");

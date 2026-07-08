@@ -6,7 +6,7 @@
 //! filesystem so they can be replayed later, removing the need to reach real
 //! external services during local development or broad-stack tests.
 //!
-//! This crate ships as **both** a binary (the `ahm` CLI) and a library. The
+//! This crate ships as **both** a binary (the `agent-mock` CLI) and a library. The
 //! binary in `src/main.rs` is a thin shim over [`run`]; library consumers drive
 //! a server in-process with [`serve`].
 //!
@@ -57,7 +57,7 @@ use util::output;
 
 /// Parse `argv`, then either print the manual or run the server to completion.
 ///
-/// This is the entire body of the `ahm` binary; it is public so the thin
+/// This is the entire body of the `agent-mock` binary; it is public so the thin
 /// `src/main.rs` shim (which owns only process-level concerns) can call it.
 /// With no subcommand the top-level flags drive the server (the default); the
 /// only subcommand, `man`, prints the embedded manual and exits.
@@ -71,7 +71,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Serve(serve_args) => serve(serve_args.validate()?).await,
         // The manual is embedded at compile time (`include_str!`), so the
         // binary documents itself with no repo checkout. It carries no flags,
-        // so `ahm man` never touches `--origin` or validation.
+        // so `agent-mock man` never touches `--origin` or validation.
         Command::Man => {
             print!("{}", include_str!("../docs/manual.txt"));
             Ok(())
@@ -79,7 +79,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// The `ahm` clap command tree, for offline man-page generation. Consumed by
+/// The `agent-mock` clap command tree, for offline man-page generation. Consumed by
 /// the `man` task in the dev-only `tasks` crate, which renders it through
 /// `clap_mangen`; never reachable from the shipped binary.
 #[must_use]
@@ -158,7 +158,7 @@ pub async fn serve(args: ValidatedArgs) -> Result<(), Box<dyn std::error::Error>
                 output::error(&format!("failed to listen for ctrl-c: {err}"));
             }
             output::clear_line();
-            output::status("Closing", "ahm");
+            output::status("Closing", "agent-mock");
         }
     }
 

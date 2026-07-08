@@ -12,11 +12,11 @@ publish = false
 clap = { version = "4", features = ["derive"] }
 xshell = "0.2"
 # Reused for cargo-style status/error output (util::output), so tasks render the
-# same way as the `ahm` binary and the sibling tools. Also exposes
+# same way as the `agent-mock` binary and the sibling tools. Also exposes
 # `cli_command()`, which the `man` task feeds to clap_mangen.
 agent-habilis-mock = { path = ".." }
 # Man-page generation lives in the dev-only `man` task; renders the lib's clap
-# command tree to roff. Never compiled into the shipped `ahm`.
+# command tree to roff. Never compiled into the shipped `agent-mock`.
 clap_mangen = "0.2"
 
 [lints]

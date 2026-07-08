@@ -1,12 +1,12 @@
-AHM(1)                        Agent Habilis Mock                        AHM(1)
+AGENT-MOCK(1)                 Agent Habilis Mock                 AGENT-MOCK(1)
 
 
 
 NAME
-       ahm - HTTP mock server for development and stable E2E tests
+       agent-mock - HTTP mock server for development and stable E2E tests
 
 SYNOPSIS
-       ahm serve [--origin URL] [--port N] [--mocks-dir DIR] [--mode MODE]
+       agent-mock serve [--origin URL] [--port N] [--mocks-dir DIR] [--mode MODE]
                  [--update off|startup|only] [--delay MS] [--throttle BYTES/S]
                  [--retries N] [--mock-keys A,B,...] [--logging LEVEL] [--cors]
                  [--proxy URL] [--redacted-headers JSON]
@@ -14,12 +14,12 @@ SYNOPSIS
                  [--overwrite-request-headers JSON]
                  [--rewrite-path PREFIX=>REPLACEMENT,...]
 
-       ahm man
+       agent-mock man
 
-       ahm --help | --version
+       agent-mock --help | --version
 
 DESCRIPTION
-       ahm (agent-habilis-mock) is a self-initializing fake implemented as a
+       agent-mock (agent-habilis-mock) is a self-initializing fake implemented as a
        reverse proxy: it records HTTP interactions to the filesystem so they
        can be replayed later, removing the need to reach the real upstream
        service during local development or in broad-stack tests.
@@ -39,7 +39,7 @@ DESCRIPTION
 
        HEALTH CHECKS
               Liveness and readiness probes live at /.well-known/live and
-              /.well-known/ready. They are answered directly by ahm and are
+              /.well-known/ready. They are answered directly by agent-mock and are
               never proxied, recorded, or path-rewritten.
 
 MODES
@@ -55,7 +55,7 @@ MODES
                    mock.
 
 OPTIONS
-       All options below belong to the serve subcommand (ahm serve --origin …).
+       All options below belong to the serve subcommand (agent-mock serve --origin …).
 
        --origin URL
               Origin base URL to proxy requests to. Must use the http:// or
@@ -161,32 +161,32 @@ MOCK FILE FORMAT
 EXAMPLES
        Record and replay against a real origin:
 
-              ahm serve --origin http://example.com --mocks-dir ./mocks \
+              agent-mock serve --origin http://example.com --mocks-dir ./mocks \
                   --mode read-write
 
        Replay only (serve recorded mocks, 404 on a miss):
 
-              ahm serve --mocks-dir ./mocks --mode read
+              agent-mock serve --mocks-dir ./mocks --mode read
 
        Resilient proxy (fetch live, fall back to a mock on a 5xx or outage):
 
-              ahm serve --origin http://example.com --mocks-dir ./mocks \
+              agent-mock serve --origin http://example.com --mocks-dir ./mocks \
                   --mode pass-read
 
        Key mocks by method, URL, and a GraphQL operation field:
 
-              ahm serve --origin http://example.com --mode read-write \
+              agent-mock serve --origin http://example.com --mode read-write \
                   --mock-keys method,url,body.operationName
 
        Strip an internal prefix before lookup and proxying:
 
-              ahm serve --origin http://example.com --mode read-write \
+              agent-mock serve --origin http://example.com --mode read-write \
                   --rewrite-path /api/federated-gateway-public/graphql=>/graphql
 
        Read this manual or the version:
 
-              ahm man
-              ahm --version
+              agent-mock man
+              agent-mock --version
 
 EXIT STATUS
        0      Success (clean shutdown on Ctrl-C, or man printed).
@@ -199,11 +199,12 @@ FILES
        resolved to an absolute path at startup.
 
 SEE ALSO
-       ahm(1)  The conventional per-flag roff man page, generated from the
-               command tree by cargo task man. This page (ahm man) is its
+       agent-mock(1)
+               The conventional per-flag roff man page, generated from the
+               command tree by cargo task man. This page (agent-mock man) is its
                self-contained companion and adds the conceptual material the
                roff page omits.
 
 
 
-agent-habilis-mock                                                      AHM(1)
+agent-habilis-mock                                               AGENT-MOCK(1)

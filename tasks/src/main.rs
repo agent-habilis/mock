@@ -44,7 +44,7 @@ enum Task {
     Coverage,
     /// Remove build artifacts.
     Clean,
-    /// Build and install the `ahm` binary.
+    /// Build and install the `agent-mock` binary.
     Install,
     /// Build the release binary, or cut a release with `cargo-release`.
     ///

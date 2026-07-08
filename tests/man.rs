@@ -1,4 +1,4 @@
-//! Wire-contract test for `ahm man`: the binary must print its embedded manual
+//! Wire-contract test for `agent-mock man`: the binary must print its embedded manual
 //! to stdout, exit 0, and render the canonical man-page sections. Spawns the
 //! real binary (the in-process helpers drive the server, not the CLI), so this
 //! also covers the optional-subcommand wiring end to end.
@@ -7,14 +7,14 @@ use std::process::Command;
 
 #[test]
 fn man_prints_manual_to_stdout() {
-    let output = Command::new(env!("CARGO_BIN_EXE_ahm"))
+    let output = Command::new(env!("CARGO_BIN_EXE_agent-mock"))
         .arg("man")
         .output()
-        .expect("failed to run `ahm man`");
+        .expect("failed to run `agent-mock man`");
 
     assert!(
         output.status.success(),
-        "`ahm man` should exit 0, got {:?}",
+        "`agent-mock man` should exit 0, got {:?}",
         output.status
     );
 
@@ -29,8 +29,8 @@ fn man_prints_manual_to_stdout() {
         "OPTIONS",
         "EXAMPLES",
         "EXIT STATUS",
-        "ahm serve",
-        "ahm man",
+        "agent-mock serve",
+        "agent-mock man",
         "--origin",
         "--mocks-dir",
         "--rewrite-path",

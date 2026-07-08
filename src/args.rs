@@ -155,7 +155,7 @@ const MOCK_KEYS_DEFAULT: &str = "method,url";
 /// local development don't need to reach the real upstream service.
 #[derive(Parser, Debug, Clone)]
 #[command(
-    name = "ahm",
+    name = "agent-mock",
     version,
     after_help = "a tool by agent-habilis █🫈",
     arg_required_else_help = true
@@ -165,7 +165,7 @@ pub struct Cli {
     pub command: Command,
 }
 
-/// `ahm` subcommands. A subcommand is required: `serve` runs the mock server,
+/// `agent-mock` subcommands. A subcommand is required: `serve` runs the mock server,
 /// `man` prints the embedded manual.
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
@@ -175,7 +175,7 @@ pub enum Command {
     /// variant (clippy's `large_enum_variant`); `validate()` derefs through it.
     Serve(Box<ServeArgs>),
 
-    /// Print the full `ahm` manual to stdout.
+    /// Print the full `agent-mock` manual to stdout.
     ///
     /// A self-contained man page covering every flag, mode, and common
     /// workflow, embedded in the binary so it works with no repo checkout.
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn parses_kebab_case_flags() {
         let args = serve_args_from([
-            "ahm",
+            "agent-mock",
             "serve",
             "--origin",
             "http://example.com",
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn default_values_match_js() {
-        let args = serve_args_from(["ahm", "serve", "--origin", "http://example.com"]);
+        let args = serve_args_from(["agent-mock", "serve", "--origin", "http://example.com"]);
         assert_eq!(args.port, 8273);
         assert_eq!(args.mode, Mode::Pass);
         assert_eq!(args.update, Update::Off);
@@ -692,21 +692,21 @@ mod tests {
         // A subcommand is required, and `arg_required_else_help` makes a bare
         // invocation print help and exit rather than erroring on the missing
         // subcommand. Clap surfaces this as the help-on-missing-input error kind.
-        let err = Cli::try_parse_from(["ahm"]).unwrap_err();
+        let err = Cli::try_parse_from(["agent-mock"]).unwrap_err();
         assert_eq!(
             err.kind(),
             clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         );
         // The rendered output is the usage banner, not a validation error.
-        assert!(err.to_string().contains("Usage: ahm"));
+        assert!(err.to_string().contains("Usage: agent-mock"));
     }
 
     #[test]
     fn serve_without_origin_outside_read_mode_still_fails_validation() {
         // The origin requirement moved onto `ServeArgs` with the subcommand
-        // split; confirm it still fires (e.g. `ahm serve` with no --origin in
+        // split; confirm it still fires (e.g. `agent-mock serve` with no --origin in
         // the default `pass` mode), so the restructure didn't drop the check.
-        let args = serve_args_from(["ahm", "serve"]);
+        let args = serve_args_from(["agent-mock", "serve"]);
         assert!(args.validate().is_err());
     }
 

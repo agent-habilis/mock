@@ -64,8 +64,8 @@ name = "agent_habilis_mock"
 path = "src/lib.rs"
 
 [[bin]]
-# `ahm` = agent-habilis-mock, mirroring the sibling `ahs` (swarm) binary.
-name = "ahm"
+# `agent-mock` = agent-habilis-mock, mirroring the sibling `ahs` (swarm) binary.
+name = "agent-mock"
 path = "src/main.rs"
 
 [dependencies]

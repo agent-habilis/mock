@@ -24,6 +24,6 @@ pub(crate) fn run(sh: &Shell, args: &[String]) -> TaskOutcome {
     }
     output::status("Building", "release binary");
     cmd!(sh, "cargo build --release").quiet().run()?;
-    output::status("Built", "target/release/ahm");
+    output::status("Built", "target/release/agent-mock");
     Ok(())
 }
